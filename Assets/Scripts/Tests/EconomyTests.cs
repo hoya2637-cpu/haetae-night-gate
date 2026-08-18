@@ -148,42 +148,6 @@ namespace IdleDefense.Tests
             }
         }
 
-        // ───────── 2층: 환생 메타 ─────────
-
-        [Test]
-        [Ignore("P0 재작성 대기 - 단일 트랙 DPS 모델이라 오방색 5트랙 곱연산이 빠져 있다. docs/P0_검증스위트_재작성_계획.md 3.2 참조")]
-        public void 환생메타_여유가_300회차_내내_1이상()
-        {
-            double cores = 0; int tier = 1;
-            double minSlack = double.MaxValue;
-            int worstRun = 0;
-
-            for (int k = 1; k <= 300; k++)
-            {
-                int wave = EconomyCore.TargetWave(cfg, k);
-                double needLog = (EconomyCore.WaveTotalHp(cfg, wave)
-                                / new BigNumber(cfg.waveTimeWall)).Log10();
-                double coinMul = EconomyCore.CoinMultiplier(cfg, cores, tier);
-                double atkMul = EconomyCore.AttackMultiplier(cfg, cores, tier);
-                int lv = EconomyCore.AffordableLevel(cfg,
-                            EconomyCore.CumulativeCoin(cfg, wave, coinMul));
-                double haveLog = (EconomyCore.BaseDpsAtLevel(cfg, lv) * atkMul).Log10();
-                double slack = Math.Pow(10, haveLog - needLog);
-
-                if (slack < minSlack) { minSlack = slack; worstRun = k; }
-
-                cores += EconomyCore.CoreGain(cfg, wave);
-                if (EconomyCore.CanAscend(cfg, tier, wave, cores))
-                {
-                    tier++;
-                    cores = EconomyCore.CoresAfterAscend(cfg, cores);
-                }
-            }
-
-            Assert.GreaterOrEqual(minSlack, 1.0,
-                $"회차 {worstRun}에서 여유 {minSlack:F3} — 진행 불가 구간이 존재합니다");
-        }
-
         [Test]
         public void 도달웨이브가_단조증가한다()
         {

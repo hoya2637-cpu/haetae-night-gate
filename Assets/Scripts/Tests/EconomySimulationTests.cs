@@ -9,14 +9,22 @@ using IdleDefense.Economy;
 namespace IdleDefense.Tests
 {
     /// <summary>
-    /// 90일 플레이 시뮬레이션.
+    /// 구슬(젬) 경제 전용 페르소나 검증.
     ///
-    /// EconomyTests가 "공식이 맞는가"를 검사한다면
-    /// 여기는 "실제로 플레이했을 때 경제가 성립하는가"를 검사한다.
+    /// ★ 이 파일의 Simulate()는 EconomyCore 근사식 기반이며
+    ///   도달 웨이브·티어·코어는 실제 BattleRunner와 약 30웨이브 어긋난다.
+    ///   (docs/P0_계측결과_2차.md 3장 — 곱연산 누락으로 실제 77 vs 구 모델 47)
     ///
-    /// EconomyConfig의 assumedBoostsPerDay 같은 '유저 행동 가정'은
-    /// 설정이 아니라 추정치이므로, 그 근거를 여기서 만든다.
-    /// 시뮬레이션 결과가 바뀌면 Config의 가정치를 여기에 맞춰 갱신할 것.
+    ///   따라서 이 파일에서 웨이브/티어/코어를 근거로 판정하지 않는다.
+    ///   그 책임은 SimulationTests(sim)가 실제 BattleRunner로 진다.
+    ///
+    /// 왜 젬만 남겼는가 —
+    ///   구슬 지급량은 `floor(인정시간 x gemsPerHour)`로, 웨이브·코인 배수와 무관하다.
+    ///   즉 근사 모델의 부정확성이 젬 결론에는 영향을 주지 않는다.
+    ///   접속 횟수와 자리비움 시간만이 변수이므로 이 시뮬레이터로 충분하다.
+    ///
+    /// 2026-08 P0에서 코어·티어·웨이브에 의존하던 8개를 sim으로 흡수하고 제거했다.
+    /// 테스트 개수가 줄어든 것이 아니라, 낡은 근사 모델을 실제 런타임 검증으로 교체한 것이다.
     /// </summary>
     public class EconomySimulationTests
     {
@@ -172,27 +180,6 @@ namespace IdleDefense.Tests
             return r;
         }
 
-        // ─────────────────────────────────────────
-
-        [Test]
-        public void 페르소나_90일_전체_리포트()
-        {
-            Assert.IsTrue(cfg.Validate(out string err), err);
-
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine("페르소나 | 웨이브 | 티어 | 코어 | 젬(7일/30일/90일) | 해금완료 | 부스트 | 광고 | 일평균분");
-            foreach (var p in Personas)
-            {
-                var r = Simulate(p);
-                sb.AppendLine(
-                    $"{r.Name,-8} | {r.Wave,6} | {r.Tier,4} | {r.Cores,8:N0} | " +
-                    $"{r.GemsAtDay[7],6:N0}/{r.GemsAtDay[30],6:N0}/{r.GemsAtDay[90],6:N0} | " +
-                    $"{(r.PermanentDoneDay > 0 ? r.PermanentDoneDay + "일" : "미완"),6} | " +
-                    $"{r.Boosts,5} | {r.Ads,5} | {r.ActiveMinutes / 90.0,7:F1}");
-            }
-            Debug.Log(sb.ToString());
-        }
-
         [Test]
         public void 모든_페르소나가_구슬을_무한축적하지_않는다()
         {
@@ -273,122 +260,6 @@ namespace IdleDefense.Tests
             Assert.AreEqual(modelIntent, cfg.assumedBoostsPerDay, 0.05,
                 $"Config {cfg.assumedBoostsPerDay:F2} vs 페르소나 모델 {modelIntent:F2}. " +
                 "한쪽을 다른 쪽에 맞추세요.");
-        }
-
-        [Test]
-        public void 런이_절대상한_10분을_넘지_않는다()
-        {
-            // 목표는 5분, 절대 상한은 10분이다.
-            // 모든 유저의 런을 5분 이하로 강제하면 지나치게 빡빡하므로
-            // 여기서는 상한만 검사하고, 실제 평균은 리포트 테스트에서 관찰한다.
-            foreach (var p in Personas)
-            {
-                var r = Simulate(p);
-                double perRun = r.ActiveMinutes / r.Runs;
-                Assert.Less(perRun, 10.0,
-                    $"{p.Name}: 런당 {perRun:F1}분. 5분 세션 포지션을 벗어납니다.");
-            }
-        }
-
-        [Test]
-        public void 오프라인_기여도가_적정_범위에_있다()
-        {
-            // 상한과 하한을 모두 검사한다.
-            //   너무 높으면 → 게임을 안 해도 되는 게임이 된다
-            //   너무 낮으면 → "진짜 방치되는 게임"이라는 차별화가 사라진다
-            //
-            // 하한이 없으면 offlineMaxRatio를 5%로 낮춰도 아무 테스트가 걸리지 않는다.
-            // (뮤테이션 테스트에서 실제로 발견된 구멍)
-            foreach (var p in Personas)
-            {
-                var r = Simulate(p);
-                Assert.Less(r.OfflineCoinShare, 0.70,
-                    $"{p.Name}: 오프라인 기여 {r.OfflineCoinShare:P0}. 액티브 플레이 유인이 부족합니다.");
-                Assert.Greater(r.OfflineCoinShare, 0.20,
-                    $"{p.Name}: 오프라인 기여 {r.OfflineCoinShare:P0}. " +
-                    "방치형이라는 정체성이 무너집니다.");
-            }
-        }
-
-        [Test]
-        public void 오프라인_보상이_런을_유의미하게_단축한다()
-        {
-            // 오프라인의 실질 가치는 '접속했을 때 얼마나 건너뛰어 주는가'다.
-            // 4시간 방치 후 최소 절반 이상의 웨이브를 건너뛸 수 있어야
-            // 5분 세션이 성립한다.
-            const int Wave = 127;
-            var reward = EconomyCore.CalculateOffline(
-                cfg, cfg.offlineCapHours, Wave, 1.0, false);
-
-            double skipRatio = reward.StartWave / Wave;
-            Assert.Greater(skipRatio, 0.50,
-                $"4시간 방치 후 웨이브 {reward.StartWave:F0}부터 시작 " +
-                $"(도달 {Wave}의 {skipRatio:P0}). 오프라인 보상이 너무 짜서 " +
-                "매번 처음부터 다시 해야 합니다.");
-        }
-
-        [Test]
-        public void 런당_평균시간이_목표대역_안에_있다()
-        {
-            // 절대 상한(10분)만 보면 "8분짜리 게임"이 되어도 통과한다.
-            // 목표는 5분이므로 평균이 그 근처인지도 함께 본다.
-            // 하한이 있는 이유: 너무 짧으면 한 사이클에 의미 있는 변화가 없다.
-            foreach (var p in Personas)
-            {
-                var r = Simulate(p);
-                double perRun = r.ActiveMinutes / r.Runs;
-                Assert.Greater(perRun, 3.0,
-                    $"{p.Name}: 런당 {perRun:F1}분. 너무 짧아 한 사이클의 의미가 약합니다.");
-                Assert.Less(perRun, 8.0,
-                    $"{p.Name}: 런당 {perRun:F1}분. 5분 목표에서 너무 멀어졌습니다.");
-            }
-        }
-
-        [Test]
-        [Ignore("P0 재작성 대기 - 단일 트랙 DPS + 승천 이중 조건 이전의 TargetWave 곡선. docs/P0_검증스위트_재작성_계획.md 3.2/3.3 참조")]
-        public void 설계곡선이_실제_도달웨이브와_크게_어긋나지_않는다()
-        {
-            // TargetWave()의 설계 곡선은 환생 메타 검증('여유' 계산)의 기준이다.
-            // 실제 플레이가 설계보다 훨씬 멀리 가면 그 검증 자체가 무의미해진다.
-            //
-            // 참고 — 실제가 설계보다 앞서는 것은 안전한 방향이다(여유가 더 있다는 뜻).
-            // 반대로 실제가 설계에 못 미치면 유저가 벽에 갇힌다는 뜻이라 위험하다.
-            foreach (var p in Personas)
-            {
-                var r = Simulate(p);
-                int design = EconomyCore.TargetWave(cfg, r.Runs);
-                double ratio = (double)r.Wave / design;
-
-                Assert.Greater(ratio, 0.95,
-                    $"{p.Name}: 실제 {r.Wave} vs 설계 {design} ({ratio:P0}). " +
-                    "설계 곡선만큼도 못 갑니다 — 유저가 벽에 갇힙니다.");
-                Assert.Less(ratio, 1.35,
-                    $"{p.Name}: 실제 {r.Wave} vs 설계 {design} ({ratio:P0}). " +
-                    "설계 곡선이 현실과 너무 어긋나 환생 메타 검증이 무의미해집니다.");
-            }
-        }
-
-        [Test]
-        public void _90일차에_다음_목표가_남아있다()
-        {
-            foreach (var p in Personas)
-            {
-                var r = Simulate(p);
-                Assert.Less(r.Tier, cfg.tierGates.Length + 1,
-                    $"{p.Name}: 90일차에 최대 티어 도달. 콘텐츠가 소진됩니다.");
-            }
-        }
-
-        [Test]
-        public void 헤비유저가_라이트유저보다_지나치게_앞서지_않는다()
-        {
-            // 접속 6회와 1회의 격차가 과하면 라이트 유저가 이탈한다.
-            var light = Simulate(Array.Find(Personas, x => x.Name == "라이트"));
-            var heavy = Simulate(Array.Find(Personas, x => x.Name == "헤비"));
-
-            double ratio = (double)heavy.Wave / light.Wave;
-            Assert.Less(ratio, 2.0,
-                $"헤비 {heavy.Wave} vs 라이트 {light.Wave} (배율 {ratio:F2}). 격차가 과합니다.");
         }
 
         // ───────── 실제 결과값 고정 ─────────
