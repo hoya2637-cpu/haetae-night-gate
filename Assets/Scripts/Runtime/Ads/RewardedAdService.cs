@@ -178,6 +178,7 @@ namespace IdleDefense.Ads
         }
     }
 
+#if UNITY_EDITOR || ALLOW_FAKE_ADS_IN_BUILD
     /// <summary>
     /// 에디터 테스트용 더미 구현.
     /// 실제 SDK를 붙이기 전까지 이걸로 흐름을 검증한다.
@@ -194,4 +195,5 @@ namespace IdleDefense.Ads
             onRewarded?.Invoke();
         }
     }
+#endif
 }

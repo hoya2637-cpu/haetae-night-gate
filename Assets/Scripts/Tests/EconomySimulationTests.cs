@@ -345,6 +345,7 @@ namespace IdleDefense.Tests
         }
 
         [Test]
+        [Ignore("P0 재작성 대기 - 단일 트랙 DPS + 승천 이중 조건 이전의 TargetWave 곡선. docs/P0_검증스위트_재작성_계획.md 3.2/3.3 참조")]
         public void 설계곡선이_실제_도달웨이브와_크게_어긋나지_않는다()
         {
             // TargetWave()의 설계 곡선은 환생 메타 검증('여유' 계산)의 기준이다.

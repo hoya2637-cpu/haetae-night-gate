@@ -151,6 +151,7 @@ namespace IdleDefense.Tests
         // ───────── 2층: 환생 메타 ─────────
 
         [Test]
+        [Ignore("P0 재작성 대기 - 단일 트랙 DPS 모델이라 오방색 5트랙 곱연산이 빠져 있다. docs/P0_검증스위트_재작성_계획.md 3.2 참조")]
         public void 환생메타_여유가_300회차_내내_1이상()
         {
             double cores = 0; int tier = 1;

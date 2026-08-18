@@ -128,8 +128,19 @@ namespace IdleDefense.Game
 
             if (adService != null)
             {
-                // 실제 SDK 구현체로 교체할 것. 지금은 에디터 확인용 더미.
+#if UNITY_EDITOR
+                // 에디터 확인용 더미. 빌드에는 절대 들어가지 않는다.
                 adService.Initialize(new EditorFakeAdProvider());
+#elif ALLOW_FAKE_ADS_IN_BUILD
+                // 내부 테스트 빌드 전용 (오프라인 누적 실기 검증 등).
+                // 이 경로로 만든 빌드는 광고 없이 보상이 나간다. 스토어 제출 금지.
+                adService.Initialize(new EditorFakeAdProvider());
+                Debug.LogError("[AD] 더미 광고 프로바이더로 빌드되었습니다. " +
+                               "광고 없이 보상이 지급됩니다. 스토어 제출 금지.");
+#else
+#error 광고 프로바이더가 주입되지 않았습니다. AppLovinAdProvider로 교체하세요.
+#error 내부 테스트 빌드라면 Scripting Define Symbols에 ALLOW_FAKE_ADS_IN_BUILD 를 추가하세요.
+#endif
             }
             else
             {
