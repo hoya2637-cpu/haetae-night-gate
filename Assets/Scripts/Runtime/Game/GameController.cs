@@ -173,13 +173,15 @@ namespace IdleDefense.Game
             double coinMul = CurrentCoinMultiplier();
             pendingOffline = EconomyCore.CalculateOffline(
                 config, pendingAwayHours, State.lastRunWave, coinMul,
-                watchedAd: false, capHoursOverride: State.offlineCapHours);
+                watchedAd: false, capHoursOverride: State.offlineCapHours,
+                attackMultiplier: CurrentAttackMultiplier());
 
             // 광고 시청 시 받게 될 값도 미리 계산해 화면에 함께 보여준다.
             // "광고를 보면 얼마나 더 앞서가는가"가 시청률을 좌우한다.
             var withAd = EconomyCore.CalculateOffline(
                 config, pendingAwayHours, State.lastRunWave, coinMul,
-                watchedAd: true, capHoursOverride: State.offlineCapHours);
+                watchedAd: true, capHoursOverride: State.offlineCapHours,
+                attackMultiplier: CurrentAttackMultiplier());
 
             hasPendingOffline = true;
             OnOfflineRewardReady?.Invoke(new OfflineSummary
@@ -231,7 +233,8 @@ namespace IdleDefense.Game
             var reward = watchedAd
                 ? EconomyCore.CalculateOffline(
                     config, pendingAwayHours, State.lastRunWave,
-                    CurrentCoinMultiplier(), true, State.offlineCapHours)
+                    CurrentCoinMultiplier(), true, State.offlineCapHours,
+                    CurrentAttackMultiplier())
                 : pendingOffline;
 
             State.gems += reward.Gems;
@@ -267,6 +270,17 @@ namespace IdleDefense.Game
         private double CurrentCoinMultiplier()
             => EconomyCore.CoinMultiplier(config, State.cores, State.tier)
              * (Tracks?.CoinMultiplier ?? 1.0);
+
+        /// <summary>
+        /// 오프라인 시작 웨이브 상한 계산에 쓰는 전투 배수.
+        ///
+        /// Tracks.CombatMultiplier를 곱하지 않는 이유: 오프라인 수령 직후
+        /// BeginNewRun이 Tracks.ResetForRebirth()를 호출해 트랙이 0으로 돌아간다.
+        /// 즉 런 시작 시점의 곱연산 배수는 1.0이며, 오프라인 코인으로 새로 사게 된다.
+        /// EconomyCore.MaxClearableWave가 그 구매를 내부에서 재현한다.
+        /// </summary>
+        private double CurrentAttackMultiplier()
+            => EconomyCore.AttackMultiplier(config, State.cores, State.tier);
 
         private void HandleRunEnded(int deepestWave)
         {

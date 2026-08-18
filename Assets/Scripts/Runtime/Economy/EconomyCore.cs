@@ -304,13 +304,51 @@ namespace IdleDefense.Economy
         /// 시간 기준으로 주면 유저가 자기 벽보다 높은 웨이브에서 시작하게 되어
         /// 게임이 성립하지 않는다.
         /// </summary>
+        /// <summary>
+        /// 주어진 코인으로 업그레이드를 사고 났을 때, 벽에 걸리지 않고 깰 수 있는 최대 웨이브.
+        ///
+        /// 오프라인 시작 웨이브의 상한으로 쓴다. 승천 전용 예외가 아니라 일반 계약이다.
+        /// 코어 소각·업그레이드 초기화 등 전투력이 떨어지는 어떤 경우에도
+        /// "지금 실력으로 못 넘는 웨이브에 떨어뜨리지 않는다"를 보장한다.
+        ///
+        /// 구매 정책은 게임과 동일한 BuyBest다. 비용 곡선이 트랙 간 공유되므로
+        /// (NextCost = UpgradeCost(TotalLevel + 1)) 총 레벨은 코인만으로 결정되고,
+        /// 트랙 배분만 BuyBest가 정한다. 따라서 이 추정은 근사가 아니라 실제와 같다.
+        /// </summary>
+        public static int MaxClearableWave(EconomyConfig c, BigNumber coin, double attackMultiplier)
+        {
+            if (c == null || attackMultiplier <= 0) return 1;
+
+            var tracks = new UpgradeTracks(c);
+            var purse = coin;
+            while (tracks.BuyBest(purse, out var cost))
+                purse -= cost;
+
+            var dps = BaseDpsAtLevel(c, tracks.TotalLevel)
+                    * attackMultiplier * tracks.CombatMultiplier;
+            if (!dps.IsPositive) return 1;
+
+            // WaveClearSeconds는 웨이브에 대해 단조 증가하므로 이분 탐색이 성립한다.
+            int lo = 1, hi = Math.Max(1, c.maxWavePerRun);
+            if (WaveClearSeconds(c, lo, dps) > c.waveTimeWall) return 1;
+
+            while (lo < hi)
+            {
+                int mid = lo + (hi - lo + 1) / 2;
+                if (WaveClearSeconds(c, mid, dps) <= c.waveTimeWall) lo = mid;
+                else hi = mid - 1;
+            }
+            return lo;
+        }
+
         public static OfflineReward CalculateOffline(
             EconomyConfig c,
             double awayHours,
             int lastRunWave,
             double coinMultiplier,
             bool watchedAd,
-            double capHoursOverride = -1.0)
+            double capHoursOverride = -1.0,
+            double attackMultiplier = -1.0)
         {
             double cap = capHoursOverride > 0 ? capHoursOverride : c.offlineCapHours;
             double creditedForCoin = Math.Min(Math.Max(awayHours, 0.0), cap);
@@ -333,6 +371,21 @@ namespace IdleDefense.Economy
                 AppliedRatio = ratio,
                 StartWave = WaveFromCumulativeCoin(c, coin, coinMultiplier)
             };
+            // ── 전투력 상한 ──
+            // 시작 웨이브는 "직전에 도달했던 곳"이 아니라
+            // "지금 실력으로 넘을 수 있는 곳"을 넘지 않아야 한다.
+            // 승천으로 코어가 소각되면 전투력이 떨어지는데, 오프라인 보상은
+            // 더 강했던 직전 런 기준이라 못 넘는 웨이브에서 시작하게 된다.
+            // (실측: 티어 4 승천 직후 런이 1.36분 만에 종료. docs/P0_계측결과_2차.md 2장)
+            //
+            // attackMultiplier를 넘기지 않으면 상한을 적용하지 않는다.
+            // 게임 경로(GameController)는 반드시 넘긴다.
+            if (attackMultiplier > 0)
+            {
+                int powerCap = MaxClearableWave(c, coin, attackMultiplier);
+                if (result.StartWave > powerCap) result.StartWave = powerCap;
+            }
+
             return result;
         }
 

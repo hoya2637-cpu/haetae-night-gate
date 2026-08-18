@@ -197,11 +197,22 @@ namespace IdleDefense.Tests
         }
 
         [Test]
-        public void _90일차에_웨이브_170_티어6()
+        public void _90일차_설계곡선이_실측_재적합값과_일치한다()
         {
+            // 2026-08 재적합: waveCoefficient 83.92 / waveExponent 0.1849
+            // 실측 회차 270(90일) 도달 웨이브는 222, 적합식 예측은 236 (+6%).
+            // 티어는 실측·설계 모두 6으로 일치한다. docs/P0_계측결과_2차.md 4장
             int runs = (int)Math.Round(90 * cfg.runsPerDay);
             Assert.AreEqual(270, runs);
-            Assert.AreEqual(170, EconomyCore.TargetWave(cfg, runs));
+
+            int design = EconomyCore.TargetWave(cfg, runs);
+            Assert.AreEqual(236, design, "재적합 곡선의 90일차 예측값");
+
+            // 실측(222)과의 괴리가 10%를 넘으면 곡선이 다시 낡은 것이다.
+            const int measured = 222;
+            double gap = System.Math.Abs(design - measured) / (double)measured;
+            Assert.Less(gap, 0.10,
+                $"설계 곡선이 실측에서 {gap:P0} 벗어났습니다 — 재적합이 필요합니다");
         }
 
         [Test]

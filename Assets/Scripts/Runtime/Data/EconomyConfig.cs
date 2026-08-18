@@ -52,11 +52,15 @@ namespace IdleDefense.Data
         public int maxWavePerRun = 2000;
 
         [Header("환생 메타  (가정!B32~B39)")]
-        [Tooltip("도달 웨이브 = waveCoefficient x (회차+1)^waveExponent")]
-        public double waveCoefficient = 37.7;
+        [Tooltip("도달 웨이브 = waveCoefficient x (회차+1)^waveExponent.\n" +
+                 "게임 로직이 아니라 검증용 기준 곡선이다. TargetWave()에서만 쓰이며 " +
+                 "런타임 호출은 0곳. 코어 획득은 BattleRunner의 실제 도달 웨이브로 계산된다.\n" +
+                 "2026-08 실측 재적합: 37.7 -> 83.92 / 0.269 -> 0.1849. " +
+                 "회차 10 이상에서 오차 4% 이내. docs/P0_계측결과_2차.md 4.3 참조")]
+        public double waveCoefficient = 83.92;
 
         [Tooltip("위험: 단독 변경 금지. 0.40으로 올리면 여유가 0으로 붕괴")]
-        public double waveExponent = 0.269;
+        public double waveExponent = 0.1849;
 
         [Tooltip("승천 1회당 전체 배수. 위험: 1.5로 낮추면 진행 불가")]
         public double tierMultiplier = 2.5;
