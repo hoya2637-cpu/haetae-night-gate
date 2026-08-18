@@ -1,0 +1,77 @@
+# ─────────────────────────────────────────
+# Unity
+# ─────────────────────────────────────────
+# 이 폴더들은 Unity가 자동 생성하며 수 GB에 달한다.
+# 올리면 저장소가 망가지므로 절대 커밋하지 말 것.
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# Unity 3D 자동 생성
+/[Aa]ssets/AssetStoreTools*
+/[Aa]ssets/Plugins/Editor/JetBrains*
+ExportedObj/
+.consulo/
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# 크래시 리포트
+sysinfo.txt
+crashlytics-build.properties
+
+# 빌드 산출물
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# ─────────────────────────────────────────
+# IDE
+# ─────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.booproj
+
+# ─────────────────────────────────────────
+# OS
+# ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─────────────────────────────────────────
+# 비밀값 — 절대 커밋 금지
+# ─────────────────────────────────────────
+# AppLovin SDK Key, 광고 유닛 ID, 스토어 인증서 등
+# 저장소가 Private이어도 실수로 공개될 수 있으므로 분리한다.
+Assets/Settings/AdKeys.asset
+Assets/Settings/AdKeys.asset.meta
+**/secrets.json
+**/*.keystore
+**/*.p12
+**/*.mobileprovision
+.env
+.env.*
+
+# ─────────────────────────────────────────
+# 검증 도구 (로컬 전용)
+# ─────────────────────────────────────────
+tools/verify/
+*.exe
