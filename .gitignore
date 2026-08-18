@@ -75,3 +75,9 @@ Assets/Settings/AdKeys.asset.meta
 # ─────────────────────────────────────────
 tools/verify/
 *.exe
+
+# Unity 6 새 솔루션 형식 (*.sln 규칙으로는 안 걸린다)
+*.slnx
+
+# Test Runner 내보내기 결과 (로컬 확인용)
+TestResults*.xml

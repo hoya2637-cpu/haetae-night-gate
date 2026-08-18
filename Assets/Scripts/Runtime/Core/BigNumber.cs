@@ -18,7 +18,7 @@ namespace IdleDefense.Core
     ///   음수는 mantissa의 부호로 표현한다.
     /// </summary>
     [Serializable]
-    public struct BigNumber : IComparable<BigNumber>, IEquatable<BigNumber>
+    public struct BigNumber : IComparable<BigNumber>, IComparable, IEquatable<BigNumber>
     {
         // Unity 인스펙터에 노출되도록 public 필드 + SerializeField
         [SerializeField] private double mantissa;
@@ -288,6 +288,18 @@ namespace IdleDefense.Core
                 return exponent > other.exponent ? sign : -sign;
 
             return mantissa.CompareTo(other.mantissa);
+        }
+
+        /// <summary>
+        /// 비제네릭 비교. IComparable&lt;T&gt;만 구현하면 IComparable을 요구하는 API
+        /// (NUnit의 Assert.Greater, Is.GreaterThan 등)가 오버로드를 찾지 못한다.
+        /// 명시적 구현이라 일반 코드에서는 보이지 않고, 런타임 경로에서는 쓰지 않는다.
+        /// </summary>
+        int IComparable.CompareTo(object obj)
+        {
+            if (obj == null) return 1;
+            if (obj is BigNumber b) return CompareTo(b);
+            throw new ArgumentException("BigNumber끼리만 비교할 수 있습니다.", nameof(obj));
         }
 
         public bool Equals(BigNumber other) => CompareTo(other) == 0;
