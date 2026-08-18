@@ -132,10 +132,11 @@ namespace IdleDefense.Tests
                 var sb = new StringBuilder();
                 sb.AppendLine($"=== 오프라인 포함 순환 (3런/일, 자리비움 8h, 상한 {cfg.offlineCapHours}h, " +
                               $"광고 {(watchAd ? "시청" : "미시청")}, dt=0.02) ===");
-                sb.AppendLine("회차 | 티어 |   코어 | 시작웨이브 | 도달웨이브 | 건너뜀 | 런시간(분)");
+                sb.AppendLine("회차 | 티어 |    코어 | 전투배수 | 시작 | 도달 | 헤드룸 | 런시간(분) | 비고");
 
                 double cores = 0; int tier = 1, lastWave = 1, runsToday = 1;
                 double sumMin = 0; double maxMin = 0;
+                int minHeadroom = int.MaxValue, worstRun = 0;
 
                 for (int k = 1; k <= 60; k++)
                 {
@@ -150,10 +151,16 @@ namespace IdleDefense.Tests
                     double min = r.RunSeconds / 60.0;
                     sumMin += min; if (min > maxMin) maxMin = min;
 
-                    if (k <= 10 || k % 10 == 0)
-                        sb.AppendLine(
-                            $"{k,4} | {tier,4} | {cores,6:N0} | {start,10} | {r.ReachedWave,10} | " +
-                            $"{start - 1,6} | {min,10:F2}");
+                    // 헤드룸 = 시작점과 실제 한계 사이의 여유.
+                    // 승천으로 전투력이 떨어지면 여기가 붕괴하고 런이 즉시 끝난다.
+                    // 처방 판단을 위해 전 회차를 출력한다 (샘플링 없음).
+                    int headroom = r.ReachedWave - start;
+                    if (headroom < minHeadroom) { minHeadroom = headroom; worstRun = k; }
+
+                    string note = headroom < 5 ? "<< 헤드룸 부족" : (min < 3.0 ? "<< 런 3분 미만" : "");
+                    sb.AppendLine(
+                        $"{k,4} | {tier,4} | {cores,7:N0} | {atk,8:F1} | {start,4} | {r.ReachedWave,4} | " +
+                        $"{headroom,6} | {min,10:F2} | {note}");
 
                     cores += EconomyCore.CoreGainWithDecay(cfg, r.ReachedWave, runsToday);
                     lastWave = r.ReachedWave;
@@ -161,12 +168,18 @@ namespace IdleDefense.Tests
 
                     if (EconomyCore.CanAscend(cfg, tier, r.ReachedWave, cores))
                     {
+                        double before = cores;
                         tier++;
                         cores = EconomyCore.CoresAfterAscend(cfg, cores);
+                        sb.AppendLine(
+                            $"     >>> 승천 티어 {tier - 1} -> {tier} : 코어 {before,-8:N0} -> {cores:N0}, " +
+                            $"전투배수 {EconomyCore.AttackMultiplier(cfg, before, tier - 1),0:F1} -> " +
+                            $"{EconomyCore.AttackMultiplier(cfg, cores, tier),0:F1}");
                     }
                 }
 
-                sb.AppendLine($"평균 {sumMin / 60.0:F2}분 | 최대 {maxMin:F2}분");
+                sb.AppendLine($"평균 {sumMin / 60.0:F2}분 | 최대 {maxMin:F2}분 | " +
+                              $"최소 헤드룸 {minHeadroom}웨이브 (회차 {worstRun})");
                 Debug.Log(sb.ToString());
                 TestContext.WriteLine(sb.ToString());
             }

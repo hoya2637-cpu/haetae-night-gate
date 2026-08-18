@@ -50,6 +50,29 @@ namespace IdleDefense.Tests
             return !runner.IsWalled;
         }
 
+        /// <summary>런 1회를 벽까지 돌리고 도달 웨이브를 돌려준다.</summary>
+        private int RunToWall(int startWave, BigNumber coin, double atkMul, double coinMul)
+        {
+            var runner = new BattleRunner(cfg);
+            var tracks = new UpgradeTracks(cfg);
+            runner.BeginRun(startWave, coin);
+            runner.AttackMultiplier = atkMul * tracks.CombatMultiplier;
+            runner.CoinMultiplier = coinMul * tracks.CoinMultiplier;
+
+            long guard = 0;
+            while (runner.IsRunning && guard++ < 5000000)
+            {
+                while (tracks.BuyBest(runner.Coin, out var cost))
+                {
+                    runner.SpendCoin(cost);
+                    runner.AttackMultiplier = atkMul * tracks.CombatMultiplier;
+                    runner.CoinMultiplier = coinMul * tracks.CoinMultiplier;
+                }
+                runner.Tick(0.1, tracks.TotalLevel);
+            }
+            return runner.DeepestWave;
+        }
+
         // ── 1. 일반 환생 ──
 
         [Test]
@@ -90,22 +113,32 @@ namespace IdleDefense.Tests
         }
 
         [Test]
-        public void 승천직후_시작웨이브가_상한없을때보다_낮아진다()
+        public void 상한은_시작웨이브를_올리지_않는다()
         {
-            const int lastWave = 166;
-            double coresAfter = EconomyCore.CoresAfterAscend(cfg, 2300);
-            double atkAfter = EconomyCore.AttackMultiplier(cfg, coresAfter, 4);
-            double coinAfter = EconomyCore.CoinMultiplier(cfg, coresAfter, 4);
+            // 상한은 안전망이다. 시작 웨이브를 낮출 수는 있어도 올려서는 안 되고,
+            // 코인 보상에는 손대지 않아야 한다.
+            //
+            // 주의 - 승천 직후에도 이 상한은 대개 걸리지 않는다.
+            // 실측(docs/P0_계측결과_2차.md 2장)의 1.36분 런은
+            // "못 넘는 웨이브에서 시작해서"가 아니라
+            // "넘을 수 있는 한계와 시작점 사이 여유(헤드룸)가 1웨이브뿐"이라서였다.
+            // 헤드룸 문제는 별도 처방이 필요하며 계측 하네스가 추적한다.
+            foreach (int tier in new[] { 1, 2, 3, 4, 5 })
+            {
+                double cores = EconomyCore.CoresAfterAscend(cfg, 2300);
+                double atk = EconomyCore.AttackMultiplier(cfg, cores, tier);
+                double coin = EconomyCore.CoinMultiplier(cfg, cores, tier);
 
-            var capped = EconomyCore.CalculateOffline(
-                cfg, 8.0, lastWave, coinAfter, false, cfg.offlineCapHours, atkAfter);
-            var uncapped = EconomyCore.CalculateOffline(
-                cfg, 8.0, lastWave, coinAfter, false, cfg.offlineCapHours);
+                var capped = EconomyCore.CalculateOffline(
+                    cfg, 8.0, 166, coin, false, cfg.offlineCapHours, atk);
+                var uncapped = EconomyCore.CalculateOffline(
+                    cfg, 8.0, 166, coin, false, cfg.offlineCapHours);
 
-            Assert.Less(capped.StartWave, uncapped.StartWave,
-                "승천 직후인데 상한이 전혀 작동하지 않았습니다");
-            Assert.AreEqual(uncapped.Coin.ToString(), capped.Coin.ToString(),
-                "상한은 시작 웨이브만 낮춰야 하며 코인 보상은 그대로여야 합니다");
+                Assert.LessOrEqual(capped.StartWave, uncapped.StartWave,
+                    $"티어 {tier}: 상한이 시작 웨이브를 올렸습니다");
+                Assert.AreEqual(uncapped.Coin.ToString(), capped.Coin.ToString(),
+                    $"티어 {tier}: 상한이 코인 보상을 바꿨습니다");
+            }
         }
 
         // ── 3. 극단적인 코어 소각 ──
@@ -214,6 +247,71 @@ namespace IdleDefense.Tests
                 Assert.GreaterOrEqual(w, prev, $"전투배수 {atk}에서 역전이 발생했습니다");
                 prev = w;
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  결정 기록 — 승천 직후 짧은 런을 허용한다
+        // ═══════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// 승천 직후 헤드룸(도달 − 시작)이 좁아지는 것은 방치가 아니라 측정 후 선택이다.
+        ///
+        /// 2026-08 실측 (docs/P0_계측결과_3차_헤드룸.md):
+        ///   승천 3→4 직후 런 = 헤드룸 1, 1.36분 (광고 시청 시 0, 0.73분)
+        ///   그 다음 런       = 헤드룸 22, 8.55분      ← 한 런 만에 회복
+        ///   60회차 중 붕괴는 승천당 1회뿐. 지속되지 않는다.
+        ///
+        /// 회복하는 이유: 오프라인 시작 웨이브가 '직전 런의 도달'을 기준으로 산출되므로,
+        /// 짧은 런이 나오면 그 결과가 다음 시작점을 자동으로 낮춘다. 자기 교정 구조다.
+        /// 여기에 minHeadroom 같은 인위적 하한을 넣으면 이 교정을 덮어쓰게 된다.
+        ///
+        /// 따라서 minHeadroom 보정은 적용하지 않는다.
+        /// 대신 마스터문서 8.4의 티어 진입 연출로 그 순간을 덮고,
+        /// 소프트런치에서 아래 두 지표를 확인한 뒤 재검토한다.
+        ///   - 승천 직후 세션 이탈률 vs 평시
+        ///   - 승천 직후 광고 시청률 vs 평시  (유일하게 확인된 역전 지점)
+        ///
+        /// 이 테스트는 그 '자기 교정'이 실제로 작동하는지를 고정한다.
+        /// 교정이 깨지면 짧은 런이 연쇄되므로 여기서 먼저 잡힌다.
+        /// </summary>
+        [Test]
+        public void 승천직후_헤드룸_감소는_한_런으로_끝난다()
+        {
+            const int lastWave = 173;          // 승천 직전 런의 도달 웨이브
+            const double coresBefore = 2309;
+            const int tierAfter = 4;
+
+            double cores = EconomyCore.CoresAfterAscend(cfg, coresBefore);
+
+            // ── 런 A : 승천 직후 ──
+            double atkA = EconomyCore.AttackMultiplier(cfg, cores, tierAfter);
+            double coinA = EconomyCore.CoinMultiplier(cfg, cores, tierAfter);
+            var offA = EconomyCore.CalculateOffline(
+                cfg, 8.0, lastWave, coinA, false, cfg.offlineCapHours, atkA);
+            int startA = Math.Max(1, (int)offA.StartWave);
+            int reachedA = RunToWall(startA, offA.Coin, atkA, coinA);
+            int headroomA = reachedA - startA;
+
+            // ── 런 B : 그 다음 ──
+            cores += EconomyCore.CoreGainWithDecay(cfg, reachedA, 1);
+            double atkB = EconomyCore.AttackMultiplier(cfg, cores, tierAfter);
+            double coinB = EconomyCore.CoinMultiplier(cfg, cores, tierAfter);
+            var offB = EconomyCore.CalculateOffline(
+                cfg, 8.0, reachedA, coinB, false, cfg.offlineCapHours, atkB);
+            int startB = Math.Max(1, (int)offB.StartWave);
+            int reachedB = RunToWall(startB, offB.Coin, atkB, coinB);
+            int headroomB = reachedB - startB;
+
+            Assert.Less(headroomA, 10,
+                $"승천 직후 헤드룸이 {headroomA} — 전제가 바뀌었다면 이 결정을 재검토하세요");
+
+            Assert.GreaterOrEqual(headroomB, 10,
+                $"자기 교정이 작동하지 않았습니다. 승천 직후 {headroomA} -> 다음 런 {headroomB}. " +
+                "짧은 런이 연쇄되면 minHeadroom 보정을 넣어야 합니다 " +
+                "(docs/P0_계측결과_3차_헤드룸.md 4장)");
+
+            Assert.Greater(headroomB, headroomA,
+                "다음 런이 회복되지 않았습니다");
         }
     }
 }
