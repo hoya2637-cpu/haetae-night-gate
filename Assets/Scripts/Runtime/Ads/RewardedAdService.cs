@@ -186,11 +186,26 @@ namespace IdleDefense.Ads
     /// </summary>
     public class EditorFakeAdProvider : IRewardedAdProvider
     {
+        /// <summary>
+        /// 다음 1회만 실패로 처리한다. 에디터 디버그 HUD가 실패 경로를 태우기 위한 스위치다.
+        /// 이 더미 구현은 항상 성공하므로, 이게 없으면 에디터에서
+        /// ad_request(result=failed) 이벤트를 한 번도 만들 수 없다.
+        /// </summary>
+        public static bool ForceFailOnce;
+
         public bool IsReady(RewardType type) => true;
         public void Load(RewardType type) { }
 
         public void Show(RewardType type, Action onRewarded, Action<string> onFailed)
         {
+            if (ForceFailOnce)
+            {
+                ForceFailOnce = false;
+                Debug.Log($"[FakeAd] {type} 광고 강제 실패 처리");
+                onFailed?.Invoke("에디터 강제 실패");
+                return;
+            }
+
             Debug.Log($"[FakeAd] {type} 광고 시청 완료 처리");
             onRewarded?.Invoke();
         }

@@ -320,5 +320,54 @@ namespace IdleDefense.Tests
             Assert.Greater(headroomB, headroomA,
                 "다음 런이 회복되지 않았습니다");
         }
+        // ─────────────────────────────────────────
+        // reward_multiplier 계약
+        //
+        // 계측이 offline_claim에 싣는 reward_multiplier는 "광고를 봤는가"가 아니라
+        // "실제로 몇 배가 지급됐는가"다. 그 숫자가 진짜 2가 맞는지는 경제 쪽 계약이다.
+        //
+        // 이 테스트가 잡으려는 것:
+        //   offlineMaxRatio(0.30) x offlineAdMultiplier(2.0) = 0.60 인데
+        //   offlineRatioCeiling도 0.60이라 지금은 딱 맞는다. 여유가 0이다.
+        //   셋 중 아무거나 건드리면 광고 보상이 조용히 2배 미만이 되고,
+        //   유저는 광고를 봤는데 2배를 못 받는다. 그 순간을 여기서 잡는다.
+
+        [Test]
+        public void 광고_오프라인_보상은_실제로_2배가_지급된다()
+        {
+            foreach (double away in new[] { 0.5, 2.0, 4.0, 12.0, 48.0 })
+            foreach (int prevWave in new[] { 20, 77, 150, 300 })
+            {
+                var plain = EconomyCore.CalculateOffline(
+                    cfg, away, prevWave, 1.0, watchedAd: false);
+                var withAd = EconomyCore.CalculateOffline(
+                    cfg, away, prevWave, 1.0, watchedAd: true);
+
+                if (!plain.Coin.IsPositive) continue;
+
+                double applied = Math.Pow(
+                    10.0, withAd.Coin.Log10() - plain.Coin.Log10());
+
+                Assert.AreEqual(cfg.offlineAdMultiplier, applied, 0.001,
+                    $"광고 보상이 {applied:F3}배입니다 (자리비움 {away}h, 직전 웨이브 {prevWave}). " +
+                    $"offlineMaxRatio({cfg.offlineMaxRatio}) x offlineAdMultiplier({cfg.offlineAdMultiplier})가 " +
+                    $"offlineRatioCeiling({cfg.offlineRatioCeiling})에 잘려 " +
+                    "유저가 광고를 보고도 2배를 못 받습니다. " +
+                    "계측의 reward_multiplier도 2가 아닌 값으로 찍힙니다.");
+            }
+        }
+
+        [Test]
+        public void 광고_보상은_구슬을_늘리지_않는다()
+        {
+            // 구슬은 시간 기반(gemsPerHour)이라 광고 배수의 대상이 아니다.
+            // 여기가 뚫리면 90일 젬 수지가 무너진다.
+            var plain = EconomyCore.CalculateOffline(cfg, 4.0, 100, 1.0, watchedAd: false);
+            var withAd = EconomyCore.CalculateOffline(cfg, 4.0, 100, 1.0, watchedAd: true);
+
+            Assert.AreEqual(plain.Gems, withAd.Gems,
+                "광고가 구슬까지 2배로 만들고 있습니다. 젬 싱크 검증이 전부 무의미해집니다.");
+        }
+
     }
 }

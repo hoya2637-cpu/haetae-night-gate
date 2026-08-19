@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using IdleDefense.Core;
 using IdleDefense.Data;
@@ -78,15 +79,78 @@ namespace IdleDefense.Game
             }
         }
 
+        /// <summary>
+        /// 오프라인 보상이 '실제로 지급된' 결과.
+        ///
+        /// ★ 제안(OnOfflineRewardReady)과 수령(OnOfflineClaimed)은 다른 사건이다.
+        ///   제안만 보고 껐는데 수령으로 집계되면 오프라인 배치의 수익 분석이 통째로 틀어진다.
+        ///
+        /// ★ RewardMultiplier는 '광고를 봤는가'가 아니라 '실제로 몇 배가 지급됐는가'다.
+        ///   토큰 검증에 실패해 일반 수령으로 떨어지면 광고를 봤어도 1.0이다.
+        ///   광고 SDK를 교체해도 이 숫자의 의미는 변하지 않는다.
+        /// </summary>
+        public struct OfflineClaim
+        {
+            public double AwayHours;
+            public BigNumber Coin;
+            public int Gems;
+            public int PreviousWave;
+            public int StartWave;
+            /// <summary>기본 제안 대비 실제 지급 배수. 1.0 = 일반, 2.0 = 광고 2배</summary>
+            public double RewardMultiplier;
+        }
+
         /// <summary>오프라인 보상이 준비됨. UI가 이걸 받아 수령 화면을 띄운다.</summary>
         public event Action<OfflineSummary> OnOfflineRewardReady;
 
+        /// <summary>오프라인 보상이 실제로 지급됨. 계측은 이 시점만 수령으로 센다.</summary>
+        public event Action<OfflineClaim> OnOfflineClaimed;
+
+        /// <summary>
+        /// 부적 장착 변경 결과. 계측이 조합별 분포를 뽑는 근거다.
+        ///
+        /// LoadoutKey를 '정렬해서 이어붙인 문자열'로 주는 이유:
+        ///   분석에서 알고 싶은 것은 '어떤 조합을 쓰는가'이지 '몇 번 슬롯에 뭘 뒀는가'가 아니다.
+        ///   순서를 남기면 같은 조합이 120가지(5!) 키로 흩어져 집계가 안 된다.
+        /// </summary>
+        public struct TalismanChange
+        {
+            /// <summary>정렬된 장착 부적 id를 '|'로 이은 정본 키.</summary>
+            public string LoadoutKey;
+            /// <summary>이번에 추가된 부적 id들. 없으면 빈 문자열.</summary>
+            public string Added;
+            /// <summary>이번에 빠진 부적 id들. 없으면 빈 문자열.</summary>
+            public string Removed;
+            public int SlotCount;
+        }
+
+        /// <summary>부적 장착이 '실제로 바뀐' 경우에만 발화한다. 같은 구성 재적용은 침묵한다.</summary>
+        public event Action<TalismanChange> OnTalismanChanged;
+
+        /// <summary>
+        /// 런 시작. 계측이 게임 상태를 추측하지 않도록 실제 값을 그대로 넘긴다.
+        /// runIndex는 State.runIndex이며, session_id와 조합해 런을 식별한다.
+        /// </summary>
+        public event Action<int, int, bool> OnRunStarted;   // runIndex, startWave, fromOffline
+
         public event Action OnRebirth;
-        public event Action<int> OnAscend;
+
+        /// <summary>런 종료. 계측이 BattleRunner에 직접 붙지 않도록 여기서 중계한다.</summary>
+        public event Action<int, bool> OnRunEnded;          // deepestWave, walled
+
+        /// <summary>
+        /// 승천. 승천 전후 상태를 함께 넘긴다.
+        /// 승천 후 기록 회복은 P0에서 발견한 최우선 UX 지표이며(1/3/7/20/40런),
+        /// 이 값들이 없으면 계측 쪽에서 추측해야 한다.
+        /// </summary>
+        public event Action<int, int, double, double> OnAscend;  // tierBefore, tierAfter, coresBefore, coresAfter
 
         private float saveTimer;
         private EconomyCore.OfflineReward pendingOffline;
         private bool hasPendingOffline;
+
+        /// <summary>오프라인 보상이 수령 대기 중인가. 수령 전에는 런이 시작되지 않는다.</summary>
+        public bool HasPendingOffline => hasPendingOffline;
 
         /// <summary>
         /// 오프라인 보상 계산의 기준이 된 자리비움 시간.
@@ -103,6 +167,9 @@ namespace IdleDefense.Game
 
         private void Awake()
         {
+            // 같은 GameObject에 붙어 있으면 인스펙터 배선 없이도 잡는다.
+            if (adService == null) adService = GetComponent<RewardedAdService>();
+
             if (config == null)
             {
                 Debug.LogError("[GameController] EconomyConfig가 비어 있습니다. " +
@@ -123,6 +190,7 @@ namespace IdleDefense.Game
             Tracks = new UpgradeTracks(config, State.trackLevels);
             Battle = new BattleRunner(config);
             Talismans = new TalismanSystem(config) { AutoSummon = autoTalisman };
+            ApplyLoadout(State.equippedTalismans);
 
             Battle.OnRunEnded += HandleRunEnded;
 
@@ -149,12 +217,16 @@ namespace IdleDefense.Game
             }
 
             Application.targetFrameRate = 60;
-
-            PrepareOfflineReward();
         }
 
         private void Start()
         {
+            // ★ PrepareOfflineReward를 Awake가 아니라 Start에서 부른다.
+            //   OnOfflineRewardReady를 Awake에서 쏘면, DefaultExecutionOrder가
+            //   이 클래스보다 큰 구독자(예: DebugHud=100)는 아직 구독 전이라
+            //   그 이벤트를 구조적으로 놓친다. 구독은 Awake, 발화는 Start가 원칙이다.
+            PrepareOfflineReward();
+
             // 오프라인 보상을 수령하기 전에는 런을 시작하지 않는다.
             // UI가 ClaimOffline()을 호출하면 그때 시작한다.
             if (!hasPendingOffline) BeginNewRun(startWave: 1, startCoin: BigNumber.Zero);
@@ -240,17 +312,34 @@ namespace IdleDefense.Game
             State.gems += reward.Gems;
             hasPendingOffline = false;
 
+            // 실제 지급 배수. 광고 시청 여부가 아니라 지급 결과로 잰다.
+            // AppliedRatio를 쓴다. 코인 나눗셈보다 정확하고,
+            // 천장(offlineRatioCeiling)에 잘렸을 때 2가 아닌 실제 값이 그대로 남는다.
+            double appliedMultiplier = 1.0;
+            if (watchedAd && pendingOffline.AppliedRatio > 0.0)
+                appliedMultiplier = reward.AppliedRatio / pendingOffline.AppliedRatio;
+
+            OnOfflineClaimed?.Invoke(new OfflineClaim
+            {
+                AwayHours = pendingAwayHours,
+                Coin = reward.Coin,
+                Gems = reward.Gems,
+                PreviousWave = State.lastRunWave,
+                StartWave = Math.Max(1, (int)reward.StartWave),
+                RewardMultiplier = appliedMultiplier,
+            });
+
             // 철칙 — 코어(도깨비불)는 오프라인으로 지급하지 않는다.
             // 지급하면 90일 성장 곡선이 즉시 붕괴한다.
 
-            BeginNewRun(Math.Max(1, (int)reward.StartWave), reward.Coin);
+            BeginNewRun(Math.Max(1, (int)reward.StartWave), reward.Coin, fromOffline: true);
             SaveNow();
         }
 
         // ─────────────────────────────────────────
         // 런
 
-        private void BeginNewRun(int startWave, BigNumber startCoin)
+        private void BeginNewRun(int startWave, BigNumber startCoin, bool fromOffline = false)
         {
             Tracks.ResetForRebirth();
             State.trackLevels = Tracks.Snapshot();
@@ -265,6 +354,8 @@ namespace IdleDefense.Game
 
             Battle.BeginRun(startWave, startCoin);
             State.currentWave = startWave;
+
+            OnRunStarted?.Invoke(State.runIndex, startWave, fromOffline);
         }
 
         private double CurrentCoinMultiplier()
@@ -287,6 +378,8 @@ namespace IdleDefense.Game
             State.lastRunWave = deepestWave;
             if (deepestWave > State.bestWave) State.bestWave = deepestWave;
             SaveNow();
+
+            OnRunEnded?.Invoke(deepestWave, Battle.IsWalled);
 
             if (autoRebirth) DoRebirth();
         }
@@ -319,9 +412,13 @@ namespace IdleDefense.Game
 
             if (EconomyCore.CanAscend(config, State.tier, wave, State.cores))
             {
+                int tierBefore = State.tier;
+                double coresBefore = State.cores;
+
                 State.tier++;
                 State.cores = EconomyCore.CoresAfterAscend(config, State.cores);
-                OnAscend?.Invoke(State.tier);
+
+                OnAscend?.Invoke(tierBefore, State.tier, coresBefore, State.cores);
             }
 
             Talismans.ResetAll();
@@ -348,6 +445,46 @@ namespace IdleDefense.Game
         /// </summary>
         public bool SummonTalisman(int slot, TalismanSystem.Lane lane)
             => Talismans.Summon(slot, lane);
+
+        /// <summary>
+        /// 장착 교체. 세이브의 id 목록을 실제 부적 인스턴스로 바꿔 끼운다.
+        /// 카탈로그 원본이 아니라 복제본이 들어가므로(Equip이 Clone한다)
+        /// 런타임 쿨타임이 정적 카탈로그를 오염시키지 않는다.
+        /// </summary>
+        public void ApplyLoadout(string[] talismanIds)
+        {
+            var before = State.equippedTalismans ?? new string[0];
+
+            // 정규화와 쿨타임 보존은 전부 TalismanSystem이 한다.
+            // 여기서 UnequipAll + Equip을 직접 조합하면 쿨타임 보존 규칙이
+            // 호출자마다 갈라지고, 그게 정확히 이번 익스플로잇의 원인이었다.
+            var after = Talismans.ApplyLoadout(talismanIds);
+            State.equippedTalismans = after;
+
+            // 같은 구성을 다시 적용한 것은 사건이 아니다.
+            // 부팅 때마다 talisman_change가 찍히면 조합 분포가 '장착 시점'이 아니라
+            // '실행 횟수'를 세게 되어 지표가 의미를 잃는다.
+            string keyBefore = string.Join("|", TalismanCatalog.NormalizeLoadout(before));
+            string keyAfter = string.Join("|", after);
+            if (keyBefore == keyAfter) return;
+
+            SaveNow();   // 장착은 유저의 명시적 선택이다. 자동저장을 기다리지 않는다.
+
+            OnTalismanChanged?.Invoke(new TalismanChange
+            {
+                LoadoutKey = keyAfter,
+                Added = string.Join("|", Difference(after, TalismanCatalog.NormalizeLoadout(before))),
+                Removed = string.Join("|", Difference(TalismanCatalog.NormalizeLoadout(before), after)),
+                SlotCount = after.Length,
+            });
+        }
+
+        private static List<string> Difference(string[] a, string[] b)
+        {
+            var result = new List<string>();
+            foreach (var id in a) if (Array.IndexOf(b, id) < 0) result.Add(id);
+            return result;
+        }
 
         public bool TryUpgrade(EconomyCore.Track track)
         {
@@ -431,6 +568,11 @@ namespace IdleDefense.Game
             double battle = real * Math.Max(0.1, Battle.SpeedMultiplier);
             Talismans.Tick(real, battle);
             Battle.TalismanMultiplier = Talismans.CurrentDamageMultiplier;
+
+            // 저승사자류 즉시 삭제. 꺼내면 사라지므로 두 번 적용될 수 없다.
+            // Battle.Tick보다 먼저 넘겨야 같은 프레임에 클리어 판정을 받는다.
+            double execute = Talismans.ConsumeExecuteFraction();
+            if (execute > 0.0) Battle.ExecuteFraction(execute);
 
             Battle.Tick(real, Tracks.TotalLevel);
 

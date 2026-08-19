@@ -204,6 +204,33 @@ namespace IdleDefense.Economy
                 if (DokkaebiRemaining <= 0) DokkaebiActive = false;
             }
 
+            // ── 벽 판정 ──
+            //
+            // ★ 반드시 피해 적용보다 '먼저' 한다.
+            //
+            // 뒤에 두면 이런 구멍이 생긴다:
+            //   웨이브 잔여 체력이 한 틱의 부적 피해로 0이 되면
+            //   아래의 조기 return에 걸려 벽 판정 자체가 실행되지 않는다.
+            //   즉 부적이 충분히 세면 넘을 수 없는 벽을 그냥 통과해 버린다.
+            //   그 순간 "부적은 속도만 바꾸고 도달점은 못 바꾼다"가 깨지고,
+            //   보증의 성립 여부가 dt(프레임 간격)와 부적 세기에 종속된다.
+            //
+            // 벽은 '부적을 뺀 순수 성장'으로만 판정한다.
+            // 부적의 역할은 "이미 넘을 수 있는 구간을 빨리 지나가는 것"이지
+            // "못 넘던 벽을 넘는 것"이 아니다.
+            var baseDps = BaseDpsWithoutTalisman(upgradeLevel);
+            double baseClearSeconds = baseDps.IsZero || !baseDps.IsPositive
+                ? double.PositiveInfinity
+                : (WaveHpTotal / baseDps).ToDouble();
+
+            if (baseClearSeconds > cfg.waveTimeWall)
+            {
+                IsWalled = true;
+                IsRunning = false;
+                OnRunEnded?.Invoke(DeepestWave);
+                return;
+            }
+
             var dps = CurrentDps(upgradeLevel);
             WaveHpRemaining -= dps * dt;
 
@@ -226,28 +253,6 @@ namespace IdleDefense.Economy
                 return;
             }
 
-            // ── 벽 판정 ──
-            //
-            // 중요: 벽은 '부적을 뺀 순수 성장'으로만 판정한다.
-            //
-            // 부적이 벽을 넘게 해주면 조작 실력이 도달점을 바꾸게 되고,
-            // 90일 커브가 유저마다 달라져 경제 설계가 무너진다.
-            // 부적의 역할은 "이미 넘을 수 있는 구간을 빨리 지나가는 것"이지
-            // "못 넘던 벽을 넘는 것"이 아니다.
-            //
-            // 그래서 실제 클리어는 부적 포함 DPS로 하되,
-            // 벽에 걸렸는지는 부적을 뺀 DPS로 계산한 예상 시간으로 본다.
-            var baseDps = BaseDpsWithoutTalisman(upgradeLevel);
-            double baseClearSeconds = baseDps.IsZero || !baseDps.IsPositive
-                ? double.PositiveInfinity
-                : (WaveHpTotal / baseDps).ToDouble();
-
-            if (baseClearSeconds > cfg.waveTimeWall)
-            {
-                IsWalled = true;
-                IsRunning = false;
-                OnRunEnded?.Invoke(DeepestWave);
-            }
         }
 
         /// <summary>
@@ -292,6 +297,27 @@ namespace IdleDefense.Economy
             WaveHpRemaining = WaveHpTotal;
             WaveElapsed = 0;
             shotTimer = 0;
+        }
+
+        /// <summary>
+        /// 부적의 즉시 삭제(저승사자). 현재 웨이브의 '잔여' 체력만 비율로 깎는다.
+        ///
+        /// ★ WaveHpTotal은 절대 건드리지 않는다.
+        ///   벽 판정은 WaveHpTotal / BaseDpsWithoutTalisman 이다.
+        ///   총 체력을 깎으면 그 식이 바뀌어 부적이 벽을 밀어내게 되고,
+        ///   "부적은 속도만 바꾸고 도달점은 못 바꾼다"는 원칙이 그 자리에서 무너진다.
+        ///   90일 커브가 유저의 조작 실력마다 갈라지므로 경제 설계가 성립하지 않는다.
+        ///
+        /// 웨이브 클리어 판정은 여기서 하지 않는다. 다음 Tick이 처리한다.
+        /// (클리어를 두 곳에서 하면 코인이 두 번 들어가는 사고가 난다)
+        /// </summary>
+        public void ExecuteFraction(double fraction)
+        {
+            if (!IsRunning || IsWalled) return;
+            if (fraction <= 0.0) return;
+            if (fraction > 1.0) fraction = 1.0;
+
+            WaveHpRemaining -= WaveHpRemaining * fraction;
         }
 
         /// <summary>

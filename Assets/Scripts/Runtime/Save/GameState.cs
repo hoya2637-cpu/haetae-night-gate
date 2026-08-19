@@ -46,6 +46,13 @@ namespace IdleDefense.Save
         // 결제 연동 시 반드시 함께 구현해야 한다.
         public bool adsRemoved;
 
+        /// <summary>
+        /// 장착 중인 부적 id. 1군 8종은 고정 지급이므로 '보유'가 아니라 '장착'만 저장한다.
+        /// 구버전 세이브에는 이 필드가 없다 — EnsureIntegrity가 기본 로드아웃으로 채운다.
+        /// 그래서 saveVersion을 올리지 않아도 안전하다.
+        /// </summary>
+        public string[] equippedTalismans;
+
         // ── 의도적으로 저장하지 않는 것 ──
         //
         // 배속 잔여시간(BattleRunner.SpeedBoostRemaining)은 세션 한정이다.
@@ -117,6 +124,39 @@ namespace IdleDefense.Save
             }
         }
 
+        /// <summary>
+        /// 장착 부적 정리. 세이브가 오래됐거나 손상됐을 때 조용히 게임이 망가지지 않게 한다.
+        ///
+        /// 잡아내는 것:
+        ///   - 필드 자체가 없는 구버전 세이브 (null)
+        ///   - 삭제된 부적 id (밸런스 패치로 부적을 빼면 실제로 생긴다)
+        ///   - 같은 부적 중복 장착 (곱연산이라 중복은 그대로 배수 폭발이 된다)
+        ///   - 슬롯 초과
+        /// 빈 자리는 기본 로드아웃에서 아직 안 쓴 것으로 채운다.
+        /// </summary>
+        private void RepairTalismans()
+        {
+            var fixedList = new System.Collections.Generic.List<string>(TalismanSystem.MaxSlots);
+            if (equippedTalismans != null)
+            {
+                foreach (var id in equippedTalismans)
+                {
+                    if (string.IsNullOrEmpty(id)) continue;
+                    if (!TalismanCatalog.Exists(id)) continue;
+                    if (fixedList.Contains(id)) continue;
+                    fixedList.Add(id);
+                    if (fixedList.Count >= TalismanSystem.MaxSlots) break;
+                }
+            }
+
+            // 빈 경우에만 기본 로드아웃으로 채운다.
+            // 무조건 5개로 채우면 유저가 일부러 3개만 끼운 선택을 매 로드마다 되돌려버린다.
+            if (fixedList.Count == 0)
+                fixedList.AddRange(TalismanCatalog.DefaultLoadout());
+
+            equippedTalismans = fixedList.ToArray();
+        }
+
         public void EnsureIntegrity(EconomyConfig config = null)
         {
             if (trackLevels == null || trackLevels.Length != EconomyCore.TrackCount)
@@ -138,6 +178,8 @@ namespace IdleDefense.Save
             runsToday = Clamp(runsToday, 1, 100000);
 
             if (double.IsNaN(cores) || double.IsInfinity(cores) || cores < 0) cores = 0;
+
+            RepairTalismans();
             if (cores > MaxCores) cores = MaxCores;
 
             double capMax = config?.offlineCapHoursMax ?? DefaultMaxOfflineCap;
