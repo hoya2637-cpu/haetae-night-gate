@@ -62,11 +62,21 @@ namespace IdleDefense.Economy
             },
 
             // 장군 — 광역 공격. 한 방이 크고 쿨이 길다. 포졸의 정반대.
+            //
+            // ★ 수치 근거 — 쿨 70초에서 조정. 이름값과 실제 세기가 어긋나 있었다.
+            //   화면에는 장군 x1.90 / 포졸 x1.25로 보이는데 단독 위력은
+            //   장군 9.7% < 포졸 10.2%로 뒤집혀 있었다. 유저가 믿는 것과 반대다.
+            //   원인은 세기가 아니라 노출 시간이다:
+            //     장군 6초 x 11회 =  66초   (쿨 70)
+            //     포졸 8초 x 31회 = 248초   (쿨 25)
+            //   쿨을 50으로 낮추면 13.3%가 되어
+            //   포졸(10.2) < 홍길동(11.1) < 장군(13.3) < 저승사자(15.0) 순서가 성립한다.
+            //   근거: docs/부적1군_설계와_계측.md 7장
             new TalismanSystem.Talisman
             {
                 Id = Janggun, DisplayName = "장군",
                 Effect = TalismanEffect.Damage,
-                Magnitude = 1.90, BaseDuration = 6.0, Cooldown = 70.0,
+                Magnitude = 1.90, BaseDuration = 6.0, Cooldown = 50.0,
             },
 
             // 홍길동 — 분신. 같은 효과가 두 겹으로 걸린다.
