@@ -51,6 +51,17 @@ namespace IdleDefense.Analytics
             path = Path.Combine(Application.persistentDataPath, fileName);
         }
 
+        /// <summary>
+        /// BOM 없는 UTF-8.
+        ///
+        /// Encoding.UTF8은 파일 첫머리에 BOM(EF BB BF)을 넣는다.
+        /// JSONL은 '한 줄 = 하나의 JSON'이 계약인데 BOM이 붙으면
+        /// 엄격한 파서가 첫 줄을 통째로 버린다(실측: session_start 유실).
+        /// 분석 파이프라인마다 다르게 깨지므로 애초에 안 넣는 편이 맞다.
+        /// </summary>
+        private static readonly Encoding Utf8NoBom =
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
         public string Path_ => path;
 
         public bool Send(IReadOnlyList<AnalyticsEvent> batch)
@@ -59,7 +70,7 @@ namespace IdleDefense.Analytics
             {
                 var sb = new StringBuilder(batch.Count * 256);
                 foreach (var e in batch) sb.AppendLine(e.ToJson());
-                File.AppendAllText(path, sb.ToString(), Encoding.UTF8);
+                File.AppendAllText(path, sb.ToString(), Utf8NoBom);
                 return true;
             }
             catch (Exception ex)

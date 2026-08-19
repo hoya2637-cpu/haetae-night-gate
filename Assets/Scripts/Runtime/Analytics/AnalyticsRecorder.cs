@@ -52,6 +52,17 @@ namespace IdleDefense.Analytics
         private float lastFlush;
         private int runsInSession;
 
+        /// <summary>
+        /// 세션이 열려 있는가. 이 플래그가 없으면 session_end가 중복 발화한다.
+        ///
+        /// 실측 — 첫 통합 테스트에서 세션 하나에 session_end가 20건 찍혔다.
+        ///   에디터에서는 Run In Background가 꺼져 있으면 다른 창을 클릭할 때마다
+        ///   OnApplicationPause(true)가 오고, 그때마다 종료 이벤트가 나갔다.
+        ///   모바일에서도 알림을 확인하고 돌아올 때마다 같은 일이 벌어진다.
+        ///   세션 수·세션 길이·세션당 런 수가 전부 부풀려져 리텐션 지표가 무의미해진다.
+        /// </summary>
+        private bool sessionActive;
+
         // 계측이 자체적으로 들고 있는 상태 — 게임 로직에 넣지 않기 위한 최소한
         private int bestWaveSeen;
         private int runsSinceAscend = -1;   // -1 = 아직 승천 없음
@@ -113,12 +124,26 @@ namespace IdleDefense.Analytics
             return new NullAnalyticsSink();
         }
 
-        private void Start()
+        private void Start() => BeginSession();
+
+        /// <summary>
+        /// 세션 시작. 백그라운드에서 돌아온 것도 '새 세션'으로 센다.
+        /// 모바일에서 앱을 내렸다 올리는 것은 실제로 다른 플레이 구간이고,
+        /// 그래야 세션 길이와 세션당 런 수가 의미를 갖는다.
+        /// </summary>
+        private void BeginSession()
         {
-            var e = Create(AnalyticsSchema.SessionStart)
+            if (sessionActive || buffer == null) return;
+            sessionActive = true;
+
+            sessionId = Guid.NewGuid().ToString("N").Substring(0, 16);
+            sessionStartTime = Time.realtimeSinceStartup;
+            lastFlush = sessionStartTime;
+            runsInSession = 0;
+
+            Enqueue(Create(AnalyticsSchema.SessionStart)
                 .Set("away_hours", controller.State?.AwayHours(DateTime.UtcNow) ?? 0.0)
-                .Set("is_first_launch", (controller.State?.runIndex ?? 0) == 0);
-            Enqueue(e);
+                .Set("is_first_launch", (controller.State?.runIndex ?? 0) == 0));
         }
 
         private void Update()
@@ -134,7 +159,14 @@ namespace IdleDefense.Analytics
             }
         }
 
-        private void OnApplicationPause(bool paused) { if (paused) EndSessionAndFlush(); }
+        // 앱을 내리면 세션을 닫고, 올리면 새 세션을 연다.
+        // 열고 닫는 짝이 정확히 1:1로 맞아야 세션 지표가 성립한다.
+        private void OnApplicationPause(bool paused)
+        {
+            if (paused) EndSessionAndFlush();
+            else BeginSession();
+        }
+
         private void OnApplicationQuit() => EndSessionAndFlush();
 
         private void OnDestroy()
@@ -306,6 +338,8 @@ namespace IdleDefense.Analytics
         private void EndSessionAndFlush()
         {
             if (buffer == null) return;
+            if (!sessionActive) return;   // 이미 닫힌 세션을 또 닫지 않는다
+            sessionActive = false;
 
             Enqueue(Create(AnalyticsSchema.SessionEnd)
                 .Set("duration_sec", Time.realtimeSinceStartup - sessionStartTime)

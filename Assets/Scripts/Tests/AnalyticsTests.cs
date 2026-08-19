@@ -168,6 +168,43 @@ namespace IdleDefense.Tests
         }
 
         [Test]
+        public void 숫자는_따옴표_없이_기록된다()
+        {
+            // 실측 회귀 — AppendValue의 switch에 float 케이스가 없어서
+            // session_end의 duration_sec이 "32.58694" 처럼 문자열로 새고 있었다.
+            // Unity의 시간 값(Time.realtimeSinceStartup 등)이 전부 float라 흔한 실수다.
+            //
+            // 문자열로 들어가면 BigQuery 같은 도구가 컬럼을 STRING으로 잡아
+            // 세션 길이의 평균·중앙값·분포가 통째로 계산 불가능해진다.
+            // 값은 멀쩡히 들어 있어서 눈으로는 정상으로 보이는 것이 특히 위험하다.
+            var e = new AnalyticsEvent(AnalyticsSchema.SessionEnd, 1, 0);
+            e.Set("f_val", 32.5f)
+             .Set("d_val", 18.25)
+             .Set("i_val", 7)
+             .Set("l_val", 9L);
+
+            string json = e.ToJson();
+
+            foreach (var key in new[] { "f_val", "d_val", "i_val", "l_val" })
+                Assert.IsFalse(json.Contains($"\"{key}\":\""),
+                    $"{key}이 따옴표에 싸여 문자열로 기록됐습니다. 분석에서 숫자로 못 씁니다.\n{json}");
+
+            Assert.IsTrue(json.Contains("\"f_val\":32.5"), $"float 값이 어긋났습니다.\n{json}");
+        }
+
+        [Test]
+        public void float도_NaN과_Infinity를_거른다()
+        {
+            var e = new AnalyticsEvent(AnalyticsSchema.SessionEnd, 1, 0);
+            e.Set("nan_f", float.NaN)
+             .Set("inf_f", float.PositiveInfinity);
+
+            string json = e.ToJson();
+            Assert.IsFalse(json.Contains("NaN"), "float NaN이 그대로 나갔습니다");
+            Assert.IsFalse(json.Contains("Infinity"), "float Infinity가 그대로 나갔습니다");
+        }
+
+        [Test]
         public void JSON_문자열이_이스케이프된다()
         {
             var e = new AnalyticsEvent(AnalyticsSchema.AdRequest, 1, 0);

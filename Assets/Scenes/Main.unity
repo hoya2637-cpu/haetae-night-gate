@@ -153,6 +153,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: IdleDefense.Runtime::IdleDefense.Game.DebugHud
   controller: {fileID: 0}
   recorder: {fileID: 0}
+  adService: {fileID: 0}
   fontSize: 18
   showButtons: 1
 --- !u!114 &678891642
@@ -202,7 +203,7 @@ MonoBehaviour:
   config: {fileID: 11400000, guid: f8d504b13ae65ea4a990b1b944dc4ef3, type: 2}
   autoSaveInterval: 30
   adService: {fileID: 0}
-  autoUpgrade: 0
+  autoUpgrade: 1
   autoRebirth: 0
   autoTalisman: 0
 --- !u!4 &678891645

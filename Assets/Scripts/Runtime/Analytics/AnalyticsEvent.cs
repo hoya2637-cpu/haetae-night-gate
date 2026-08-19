@@ -107,6 +107,15 @@ namespace IdleDefense.Analytics
                     sb.Append(double.IsNaN(d) || double.IsInfinity(d)
                         ? "0" : d.ToString("R", CultureInfo.InvariantCulture));
                     break;
+                // ★ float를 빠뜨리면 안 된다.
+                //   Unity의 시간 값(Time.realtimeSinceStartup 등)이 전부 float라
+                //   기본 분기로 떨어져 "32.58694" 처럼 따옴표가 붙은 문자열이 된다.
+                //   그러면 분석 도구가 컬럼을 STRING으로 잡아 평균·중앙값이 계산되지 않는다.
+                //   실측으로 session_end의 duration_sec이 이렇게 새고 있었다.
+                case float f:
+                    sb.Append(float.IsNaN(f) || float.IsInfinity(f)
+                        ? "0" : ((double)f).ToString("R", CultureInfo.InvariantCulture));
+                    break;
                 case int[] arr:
                     sb.Append('[');
                     for (int k = 0; k < arr.Length; k++)
