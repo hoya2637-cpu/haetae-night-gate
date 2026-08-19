@@ -46,6 +46,11 @@ namespace IdleDefense.Analytics
         [Tooltip("이 시간마다 전송(초). 건수가 안 차도 보낸다")]
         [SerializeField] private float flushIntervalSec = 30f;
 
+        [Header("세션")]
+        [Tooltip("백그라운드에 이 시간 이하로 머물면 같은 세션으로 잇는다(초). " +
+                 "알림을 잠깐 확인하고 돌아오는 것을 새 세션으로 세지 않기 위한 유예다.")]
+        [SerializeField] private float sessionResumeGraceSec = 30f;
+
         private AnalyticsBuffer buffer;
         private string sessionId;
         private float sessionStartTime;
@@ -62,6 +67,10 @@ namespace IdleDefense.Analytics
         ///   세션 수·세션 길이·세션당 런 수가 전부 부풀려져 리텐션 지표가 무의미해진다.
         /// </summary>
         private bool sessionActive;
+
+        /// <summary>백그라운드로 나간 시각. 복귀 시 공백 길이를 재는 기준이다.</summary>
+        private DateTime backgroundedAtUtc;
+        private bool inBackground;
 
         // 계측이 자체적으로 들고 있는 상태 — 게임 로직에 넣지 않기 위한 최소한
         private int bestWaveSeen;
@@ -94,9 +103,8 @@ namespace IdleDefense.Analytics
             IAnalyticsSink sink = BuildSink();
             buffer = new AnalyticsBuffer(sink, Mathf.Max(1, batchSize));
 
-            sessionId = Guid.NewGuid().ToString("N").Substring(0, 16);
-            sessionStartTime = Time.realtimeSinceStartup;
-            lastFlush = sessionStartTime;
+            // 세션 식별자·시작 시각은 BeginSession이 정본이다. 여기서 또 만들지 않는다.
+            lastFlush = Time.realtimeSinceStartup;
 
             controller.OnRunStarted += HandleRunStarted;
             controller.OnRunEnded += HandleRunEnded;
@@ -127,14 +135,16 @@ namespace IdleDefense.Analytics
         private void Start() => BeginSession();
 
         /// <summary>
-        /// 세션 시작. 백그라운드에서 돌아온 것도 '새 세션'으로 센다.
-        /// 모바일에서 앱을 내렸다 올리는 것은 실제로 다른 플레이 구간이고,
-        /// 그래야 세션 길이와 세션당 런 수가 의미를 갖는다.
+        /// 세션 시작.
+        /// 백그라운드에 sessionResumeGraceSec보다 오래 머물다 돌아오면 새 세션으로 본다.
+        /// 짧은 이탈까지 새 세션으로 세면 세션 수가 부풀려지고,
+        /// 반대로 몇 시간 뒤 복귀를 같은 세션으로 두면 세션 길이가 망가진다.
         /// </summary>
         private void BeginSession()
         {
             if (sessionActive || buffer == null) return;
             sessionActive = true;
+            inBackground = false;
 
             sessionId = Guid.NewGuid().ToString("N").Substring(0, 16);
             sessionStartTime = Time.realtimeSinceStartup;
@@ -159,12 +169,41 @@ namespace IdleDefense.Analytics
             }
         }
 
-        // 앱을 내리면 세션을 닫고, 올리면 새 세션을 연다.
-        // 열고 닫는 짝이 정확히 1:1로 맞아야 세션 지표가 성립한다.
+        /// <summary>
+        /// 백그라운드 전환/복귀.
+        ///
+        /// ★ 세션 경계는 '나갈 때'가 아니라 '돌아올 때' 판단한다.
+        ///   나가는 순간에는 얼마나 나가 있을지 알 수 없다.
+        ///   나갈 때 바로 session_end를 쏘면 알림을 3초 확인하고 돌아온 것도
+        ///   세션 하나로 세어져 DAU 대비 세션 수가 크게 부풀려진다.
+        ///   (실측: 첫 통합 테스트에서 0.1초짜리 세션이 생겼다)
+        ///
+        ///   그래서 나갈 때는 시각만 적고 버퍼만 비운다.
+        ///   앱이 백그라운드에서 죽어도 데이터는 이미 파일에 있다.
+        ///   session_end만 유실되는데, 그건 어느 계측 도구에서나 최선노력 항목이다.
+        ///
+        /// ★ 유예 30초는 출발점이지 확정치가 아니다.
+        ///   소프트런치에서 백그라운드 공백 분포를 보고 정한다.
+        /// </summary>
         private void OnApplicationPause(bool paused)
         {
-            if (paused) EndSessionAndFlush();
-            else BeginSession();
+            if (paused)
+            {
+                if (inBackground) return;
+                inBackground = true;
+                backgroundedAtUtc = DateTime.UtcNow;
+                buffer?.FlushAll();   // 이벤트는 쏘지 않는다. 유실만 막는다.
+                return;
+            }
+
+            if (!inBackground) return;
+            inBackground = false;
+
+            double gapSec = (DateTime.UtcNow - backgroundedAtUtc).TotalSeconds;
+            if (gapSec < sessionResumeGraceSec) return;   // 같은 세션으로 잇는다
+
+            EndSessionAndFlush();
+            BeginSession();
         }
 
         private void OnApplicationQuit() => EndSessionAndFlush();
