@@ -452,6 +452,60 @@ namespace IdleDefense.Tests
             Assert.AreEqual(TalismanSystem.MaxSlots, tal.Equipped.Count);
         }
 
+        // ─────────────────────────────────────────
+        // 자동 소환 — 유료 기능(구슬 1,500)의 계약
+
+        [Test]
+        public void 자동_소환은_효과를_겹쳐_쓸_수_있다()
+        {
+            // 회귀 감시 — TryAutoSummon의 첫 줄이 이랬다:
+            //     if (active.Count > 0) return;
+            //
+            // "효과가 돌고 있으면 아낀다"는 절약 의도였는데, 실제로는
+            // 자동이 두 부적을 절대 겹쳐 쓰지 못하게 만들었다.
+            // 겹쳐야만 값이 나오는 메타 4종이 자동에서 통째로 죽었고,
+            // 자동화를 구매한 유저는 조합을 바꿔도 결과가 거의 안 변했다.
+            // (실측: 최선 조합에서 자동 11.9% vs 중첩 허용 26.1%)
+            var tal = new TalismanSystem(cfg) { AutoSummon = true };
+            tal.ApplyLoadout(new[] { TalismanCatalog.Janggun, TalismanCatalog.Pojol });
+
+            // 중앙 배치는 1초 지연이므로 그 너머까지 돌린다.
+            for (int i = 0; i < 20; i++) tal.Tick(0.1, 0.1);
+
+            Assert.GreaterOrEqual(tal.ActiveCount, 2,
+                $"자동 소환이 효과를 하나만 유지합니다(활성 {tal.ActiveCount}). " +
+                "메타 부적은 겹쳐야 값이 나오므로, 중첩을 막으면 유료 자동화가 " +
+                "부적 조합 콘텐츠와 단절됩니다.");
+        }
+
+        [Test]
+        public void 자동_소환은_수동보다_약하다()
+        {
+            // 자동이 수동만큼 세면 조작할 이유가 사라진다.
+            // 그 불리함은 AutoEfficiency라는 '의도한 레버'가 만들어야 하며,
+            // 우연한 정책 결함이 만들어서는 안 된다(위 테스트가 그 경우를 막는다).
+            double manual = SummonAndMeasure(isAuto: false);
+            double auto = SummonAndMeasure(isAuto: true);
+
+            Assert.Greater(manual, auto,
+                $"자동({auto:F3})이 수동({manual:F3})보다 약하지 않습니다. " +
+                "조작할 이유가 사라집니다.");
+
+            // 장군 1.90, 효율 0.75 → 1 + 0.9 x 0.75 = 1.675
+            Assert.AreEqual(1.675, auto, 1e-6,
+                "AutoEfficiency가 배수의 '초과분'에만 적용되지 않았습니다. " +
+                "1.90 x 0.75 = 1.425처럼 전체에 곱하면 자동이 과도하게 약해집니다.");
+        }
+
+        private double SummonAndMeasure(bool isAuto)
+        {
+            var tal = new TalismanSystem(cfg) { AutoEfficiency = 0.75 };
+            tal.ApplyLoadout(new[] { TalismanCatalog.Janggun });
+            tal.Summon(0, TalismanSystem.Lane.Front, isAuto);
+            tal.Tick(0.1, 0.1);
+            return tal.CurrentDamageMultiplier;
+        }
+
         [Test]
         public void 배치_지연이_실제로_적용된다()
         {
