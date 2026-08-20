@@ -100,6 +100,37 @@ namespace IdleDefense.Economy
 
             public bool IsReady => CooldownRemaining <= 0;
 
+            // ── 자체 효과 (하이브리드 메타)
+            //
+            // 증폭·복제·연장은 기댈 대상이 없으면 아무 일도 하지 않는다.
+            // 그래서 메타만 5개인 조합의 바닥이 0.0%로 측정됐다.
+            // 각 메타에 고유한 자체 효과를 주어 그 바닥을 세운다.
+            //
+            // 부적별 근거는 부적2군_설계와_계측.md 4장.
+
+            /// <summary>자체 효과의 축. SelfMagnitude가 0이면 자체 효과 없음.</summary>
+            public TalismanEffect SelfEffect = TalismanEffect.Damage;
+
+            /// <summary>자체 효과 크기. 0이면 자체 효과가 없다.</summary>
+            public double SelfMagnitude = 0.0;
+
+            /// <summary>
+            /// 자체 효과 지속 = Cooldown × 이 값.
+            ///
+            /// 0.30은 고른 값이 아니라 측정된 상한이다. 0.45로 올리면
+            /// 메타 최고 단독 위력(11.2%)이 포졸(10.2%)을 넘어
+            /// 이름값 정합성이 무너진다.
+            ///
+            /// 지속을 고정 초로 두면 안 된다 — 6~10초에 쿨 45~80초면
+            /// 켜져 있는 시간이 12%뿐이라 세기를 올려도 값이 안 난다.
+            /// </summary>
+            public double SelfDurationRatio = 0.30;
+
+            /// <summary>true면 주 효과의 성패와 무관하게 항상 발동한다.</summary>
+            public bool SelfAlways = false;
+
+            public bool HasSelf => SelfMagnitude > 0.0;
+
             public Talisman Clone() => (Talisman)MemberwiseClone();
         }
 
@@ -111,6 +142,14 @@ namespace IdleDefense.Economy
             public double Remaining;        // 지속 남은 시간
             public double Magnitude;
             public int SourceSlot;          // 복제 대상에서 자기 자신을 빼기 위한 표식
+
+            /// <summary>
+            /// 이미 연장된 효과인가. 한 효과는 한 번만 연장된다.
+            ///
+            /// 이 제한이 없으면 연장 + 복제 + 증폭이 물리면 효과가 사실상 영구화되고,
+            /// 최선 조합의 단축률이 85%까지 튄다 (실측).
+            /// </summary>
+            public bool Extended;
 
             public bool IsLive => DelayRemaining <= 0.0 && Remaining > 0.0;
         }
@@ -239,6 +278,48 @@ namespace IdleDefense.Economy
         // ─────────────────────────────────────────
         // 소환
 
+        /// <summary>
+        /// 메타의 자체 효과를 건다.
+        ///
+        /// forced=true 는 주 효과가 기댈 대상을 찾지 못했다는 뜻이다.
+        /// SelfAlways 인 부적은 주 효과의 성패와 무관하게 항상 건다.
+        ///
+        /// 지속은 고정 초가 아니라 Cooldown × SelfDurationRatio 다.
+        /// 자체 효과는 약하므로 오래 켜져 있어야 값이 난다.
+        /// </summary>
+        private void ApplySelf(Talisman t, int slotIndex, Lane lane,
+                               double delay, bool isAuto, bool forced)
+        {
+            if (!t.HasSelf) return;
+            if (!t.SelfAlways && !forced) return;
+
+            double mag = t.SelfMagnitude;
+            if (isAuto) mag = Damp(t.SelfEffect, mag, AutoEfficiency);
+
+            if (t.SelfEffect == TalismanEffect.Execute)
+            {
+                if (delay <= 0.0) pendingExecute = Combine(pendingExecute, mag);
+                else active.Add(new ActiveEffect
+                {
+                    Kind = TalismanEffect.Execute,
+                    DelayRemaining = delay,
+                    Remaining = double.PositiveInfinity,
+                    Magnitude = mag,
+                    SourceSlot = slotIndex,
+                });
+                return;
+            }
+
+            active.Add(new ActiveEffect
+            {
+                Kind = t.SelfEffect,
+                DelayRemaining = delay,
+                Remaining = t.Cooldown * t.SelfDurationRatio * LaneDurationScale(lane),
+                Magnitude = mag,
+                SourceSlot = slotIndex,
+            });
+        }
+
         /// <summary>소환. 성공하면 true. 실패 사유: 슬롯 범위 밖, 쿨타임.</summary>
         public bool Summon(int slotIndex, Lane lane, bool isAuto = false)
         {
@@ -277,24 +358,36 @@ namespace IdleDefense.Economy
                         equipped[i].CooldownRemaining *= (1.0 - Clamp01(magnitude));
                         cooldowns[equipped[i].Id] = equipped[i].CooldownRemaining;
                     }
+                    // 쿨감은 언제나 무언가를 한다. 자체 효과는 SelfAlways일 때만 붙는다.
+                    ApplySelf(t, slotIndex, lane, delay, isAuto, forced: false);
                     break;
 
                 case TalismanEffect.Extend:
                     // 이미 발동 중이거나 지연 대기 중인 효과의 지속을 늘린다.
-                    // 아무것도 안 돌고 있으면 아무 일도 일어나지 않는다 — 조합 부적이다.
-                    for (int i = 0; i < active.Count; i++)
                     {
-                        var e = active[i];
-                        if (e.Kind == TalismanEffect.Execute) continue;
-                        if (double.IsPositiveInfinity(e.Remaining)) continue;
-                        e.Remaining += magnitude;
-                        active[i] = e;
+                        bool hasTarget = false;
+                        for (int i = 0; i < active.Count; i++)
+                            if (active[i].Kind != TalismanEffect.Execute) { hasTarget = true; break; }
+
+                        // 자체 효과를 '연장하기 전에' 판정한다.
+                        // 순서를 바꾸면 방금 깐 자기 효과를 자기가 연장한다.
+                        ApplySelf(t, slotIndex, lane, delay, isAuto, forced: !hasTarget);
+
+                        for (int i = 0; i < active.Count; i++)
+                        {
+                            var e = active[i];
+                            if (e.Kind == TalismanEffect.Execute) continue;
+                            if (double.IsPositiveInfinity(e.Remaining)) continue;
+                            if (e.Extended) continue;      // 한 효과는 한 번만 연장된다
+                            e.Remaining += magnitude;
+                            e.Extended = true;
+                            active[i] = e;
+                        }
                     }
                     break;
 
                 case TalismanEffect.Duplicate:
                     // 발동 중인 '다른' 효과 중 가장 최근 것을 복제한다.
-                    // 혼자 쓰면 아무 효과도 없다. 이 부적이 조합을 조합답게 만든다.
                     {
                         int src = FindLatestCopyable(slotIndex);
                         if (src >= 0)
@@ -309,10 +402,36 @@ namespace IdleDefense.Economy
                                 SourceSlot = slotIndex,
                             });
                         }
+                        ApplySelf(t, slotIndex, lane, delay, isAuto, forced: src < 0);
                     }
                     break;
 
-                default:   // Damage, Amplify
+                case TalismanEffect.Amplify:
+                    // 증폭할 피해 효과가 하나도 없으면 증폭 자체를 깔지 않는다.
+                    // 빈 증폭을 깔아두면 연장·복제의 대상이 되어 계산이 오염된다.
+                    {
+                        bool hasDamage = false;
+                        for (int i = 0; i < active.Count; i++)
+                            if (active[i].IsLive && active[i].Kind == TalismanEffect.Damage)
+                            { hasDamage = true; break; }
+
+                        if (hasDamage)
+                        {
+                            for (int c = 0; c < Math.Max(1, t.Copies); c++)
+                                active.Add(new ActiveEffect
+                                {
+                                    Kind = TalismanEffect.Amplify,
+                                    DelayRemaining = delay,
+                                    Remaining = duration,
+                                    Magnitude = magnitude,
+                                    SourceSlot = slotIndex,
+                                });
+                        }
+                        ApplySelf(t, slotIndex, lane, delay, isAuto, forced: !hasDamage);
+                    }
+                    break;
+
+                default:   // Damage
                     for (int c = 0; c < Math.Max(1, t.Copies); c++)
                     {
                         active.Add(new ActiveEffect

@@ -182,8 +182,10 @@ namespace IdleDefense.Game
                 $"부적 {equipped.Length}/{TalismanSystem.MaxSlots}", labelStyle);
             y += 30f;
 
-            foreach (var t in TalismanCatalog.FirstGroup)
+            // 카탈로그 선언 순서가 아니라 표시 순서를 쓴다. TalismanCatalog.DisplayOrder 주석 참고.
+            foreach (var id in TalismanCatalog.DisplayOrder)
             {
+                var t = TalismanCatalog.Get(id);
                 bool on = Array.IndexOf(equipped, t.Id) >= 0;
                 if (GUI.Button(new Rect(x, y, 180, 30), (on ? "■ " : "□ ") + t.DisplayName))
                     ToggleTalisman(t.Id, on);
@@ -192,6 +194,9 @@ namespace IdleDefense.Game
         }
 
         private static readonly string[] EmptyIds = new string[0];
+
+        /// <summary>소환 버튼 표시 순서. 매 프레임 new를 피하려고 재사용한다.</summary>
+        private readonly List<int> summonOrder = new List<int>(TalismanSystem.MaxSlots);
 
         private void ToggleTalisman(string id, bool currentlyOn)
         {
@@ -214,8 +219,18 @@ namespace IdleDefense.Game
             float y = Screen.height - 46f;
             float x = 12f;
 
-            for (int i = 0; i < eq.Count; i++)
+            // 버튼을 늘어놓는 순서만 표시 순서로 바꾼다.
+            // SummonTalisman에 넘기는 인덱스는 반드시 Equipped 안의 원래 슬롯 번호여야 한다 —
+            // 화면 순서를 그대로 넘기면 다른 부적이 소환된다.
+            summonOrder.Clear();
+            for (int i = 0; i < eq.Count; i++) summonOrder.Add(i);
+            summonOrder.Sort((a, b) =>
+                TalismanCatalog.DisplayIndexOf(eq[a].Id)
+                    .CompareTo(TalismanCatalog.DisplayIndexOf(eq[b].Id)));
+
+            for (int k = 0; k < summonOrder.Count; k++)
             {
+                int i = summonOrder[k];
                 string label = eq[i].IsReady
                     ? eq[i].DisplayName
                     : $"{eq[i].DisplayName} {eq[i].CooldownRemaining:F0}";

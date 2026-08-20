@@ -111,6 +111,15 @@ namespace IdleDefense.Economy
             },
 
             // ── 메타 4종 ──
+            //
+            // ★ 자체 효과(Self*) — 2026-08-20 추가.
+            //   증폭·복제·연장은 기댈 대상이 없으면 아무 일도 하지 않는다.
+            //   그래서 '메타만 5개'인 조합의 바닥이 0.0%로 측정됐다.
+            //   각 메타에 고유한 자체 효과를 주어 그 바닥을 세웠다.
+            //   지속은 고정 초가 아니라 Cooldown x 0.30 이다 —
+            //   0.45로 올리면 메타 최고 단독 위력(11.2%)이 포졸(10.2%)을 넘어
+            //   이름값 정합성이 무너진다. 0.30이 측정된 상한이다.
+            //   근거: docs/부적2군_설계와_계측.md 4장
 
             // 암행어사 — 적 약점 노출. 다른 효과의 초과분(m-1)을 60% 키운다.
             // 혼자 끼우면 배수가 1.0 그대로다. 반드시 원시 부적과 같이 써야 한다.
@@ -119,6 +128,8 @@ namespace IdleDefense.Economy
                 Id = Amhaengeosa, DisplayName = "암행어사",
                 Effect = TalismanEffect.Amplify,
                 Magnitude = 0.60, BaseDuration = 10.0, Cooldown = 60.0,
+                // 마패를 들이민다 — 증폭할 대상이 없어도 소량의 즉시삭제는 낸다.
+                SelfEffect = TalismanEffect.Execute, SelfMagnitude = 0.08, SelfAlways = true,
             },
 
             // 전우치 — 변신/복제. 발동 중인 다른 효과 하나를 80% 세기로 복제한다.
@@ -128,6 +139,8 @@ namespace IdleDefense.Economy
                 Id = Jeonuchi, DisplayName = "전우치",
                 Effect = TalismanEffect.Duplicate,
                 Magnitude = 0.80, BaseDuration = 9.0, Cooldown = 50.0,
+                // 환술(분신) — 복제할 대상이 없을 때만.
+                SelfEffect = TalismanEffect.Damage, SelfMagnitude = 1.20, SelfAlways = false,
             },
 
             // 처용 — 역병을 씻어낸다. 다른 부적들의 남은 쿨타임을 35% 깎는다.
@@ -137,6 +150,8 @@ namespace IdleDefense.Economy
                 Id = Cheoyong, DisplayName = "처용",
                 Effect = TalismanEffect.Haste,
                 Magnitude = 0.35, BaseDuration = 0.0, Cooldown = 80.0,
+                // 춤 — 쿨감은 언제나 작동하므로 자체 효과도 항상 붙는다.
+                SelfEffect = TalismanEffect.Damage, SelfMagnitude = 1.12, SelfAlways = true,
             },
 
             // 무당 — 굿으로 붙잡는다. 발동 중인 모든 효과의 지속을 5초 늘린다.
@@ -146,6 +161,8 @@ namespace IdleDefense.Economy
                 Id = Mudang, DisplayName = "무당",
                 Effect = TalismanEffect.Extend,
                 Magnitude = 5.0, BaseDuration = 0.0, Cooldown = 65.0,
+                // 작두 — 연장할 대상이 없을 때만.
+                SelfEffect = TalismanEffect.Damage, SelfMagnitude = 1.15, SelfAlways = false,
             },
         };
 
@@ -155,6 +172,35 @@ namespace IdleDefense.Economy
         /// </summary>
         public static string[] DefaultLoadout()
             => new[] { Pojol, Janggun, Hongildong, Jeoseungsaja, Amhaengeosa };
+
+        /// <summary>
+        /// 화면 표시 순서 — 집계용 정렬(NormalizeLoadout)과 분리한다.
+        ///
+        /// NormalizeLoadout의 Ordinal 정렬은 '조합 키'를 소환 순서와 무관하게 만들기 위한 것이지
+        /// 사람에게 보여줄 순서가 아니다. 그걸 그대로 UI에 쓰면 내부 영문 id의 알파벳순이
+        /// 그대로 노출된다 — amhaengeosa, hongildong, janggun, jeoseungsaja, pojol.
+        /// 스토어 아이콘이 약속한 저승사자가 네 번째 칸에 묻힌다.
+        ///
+        /// 순서 근거: 원시 4종 먼저, 그 안에서 저승사자가 첫 칸이다.
+        /// 즉발이라 지속 개념을 몰라도 되고, 체력 감소가 눈에 바로 보이며,
+        /// 단독 위력이 15.0%로 8종 중 1위다. 첫 30초를 책임질 부적이다.
+        ///
+        /// 이 배열은 표시에만 쓴다. 시뮬레이션과 자동소환은 Equipped 순서를 그대로 쓰므로
+        /// 여기를 바꿔도 밸런스는 변하지 않는다.
+        /// </summary>
+        public static readonly string[] DisplayOrder =
+        {
+            Jeoseungsaja, Janggun, Hongildong, Pojol,
+            Amhaengeosa, Jeonuchi, Cheoyong, Mudang,
+        };
+
+        /// <summary>표시 순서상 위치. 목록에 없으면 맨 뒤로 보낸다.</summary>
+        public static int DisplayIndexOf(string id)
+        {
+            for (int i = 0; i < DisplayOrder.Length; i++)
+                if (DisplayOrder[i] == id) return i;
+            return int.MaxValue;
+        }
 
         public static bool Exists(string id)
         {

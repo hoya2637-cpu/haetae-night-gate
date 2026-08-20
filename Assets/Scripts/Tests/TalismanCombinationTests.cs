@@ -139,31 +139,29 @@ namespace IdleDefense.Tests
                 }
             }
 
-            // 처용(Haste)은 '다른 부적이 쿨 중일 때' 값이 난다. 활성 효과 유무와 무관하다.
+            // 메타는 조건 없이 전부 소환한다.
             //
-            // 처음엔 이것도 ActiveCount > 0 뒤에 뒀는데, Damage 부적이 없는 조합에서는
-            // 활성 효과가 영영 안 생겨 처용을 한 번도 못 쓰는 정책이 됐다.
-            // 그 조합에서만 Greedy(난사)가 Informed를 이겼다 — 정책이 틀렸다는 신호였다.
-            for (int i = 0; i < eq.Count; i++)
-            {
-                if (!eq[i].IsReady || eq[i].Effect != TalismanEffect.Haste) continue;
-
-                bool othersOnCooldown = false;
-                for (int j = 0; j < eq.Count; j++)
-                    if (j != i && eq[j].CooldownRemaining > 0) { othersOnCooldown = true; break; }
-
-                if (othersOnCooldown && tal.Summon(i, TalismanSystem.Lane.Back)) summons++;
-            }
-
-            // 증폭·복제·연장은 깔린 효과가 있어야만 의미가 있다.
-            if (tal.ActiveCount == 0) return;
-
+            // ★ 2026-08-20 개정 — 세 번째 정책 결함이었다.
+            //   이전 정책은 두 개의 조건을 걸고 있었다:
+            //     · 처용은 '다른 부적이 쿨 중일 때'만
+            //     · 증폭·복제·연장은 ActiveCount > 0 일 때만
+            //
+            //   메타에 자체 효과(Self*)가 생긴 순간 두 조건 다 틀린 것이 됐다.
+            //   이제 모든 메타는 언제 눌러도 무언가를 한다. 조건을 기다리면 그냥 손해다.
+            //   실제로 이 조건을 남겨둔 채 계측했더니
+            //   처용·까치호랑이·바리데기·불가사리의 단독 위력이 전부 0.0%로 나왔다 —
+            //   조건이 영영 성립하지 않아 한 번도 소환되지 않았기 때문이다.
+            //
+            //   1군 5.1장에서 처용을 못 쓰게 만들었던 것과 완전히 같은 실수를,
+            //   하이브리드 전환에서 반복했다.
+            //
+            // ★ 원칙: 효과를 바꾸면 소환 정책도 같이 바꿔야 한다.
+            //   새 축을 넣을 때는 단독 위력이 0이 아닌지부터 확인하라. 0이면 대개 정책이 범인이다.
             for (int i = 0; i < eq.Count; i++)
             {
                 if (!eq[i].IsReady) continue;
                 var kind = eq[i].Effect;
                 if (kind == TalismanEffect.Damage || kind == TalismanEffect.Execute) continue;
-                if (kind == TalismanEffect.Haste) continue;
                 if (tal.Summon(i, TalismanSystem.Lane.Back)) summons++;
             }
         }
@@ -184,10 +182,27 @@ namespace IdleDefense.Tests
         [Test]
         public void 어떤_조합도_메타_부적만으로_채워지지_않는다()
         {
-            // 메타(증폭·복제·쿨감·연장)는 혼자서 값을 못 만든다.
             // 메타만 5개인 조합이 가능하면 "아무 일도 안 일어나는 조합"이 존재하게 되고,
             // 유저는 그게 자기 잘못인지 설계 잘못인지 알 수 없다.
             // 1군을 원시 4 + 메타 4로 짠 이유가 이것이며, 그래서 구조적으로 불가능하다.
+            //
+            // ★★ 2군이 들어오면 이 테스트는 반드시 깨진다. 설계상 그렇다.
+            //
+            //   17종이 되면 메타가 7종(암행어사·전우치·처용·무당·산신·까치호랑이·불가사리)이라
+            //   C(7,5) = 21개의 '메타만 5개' 조합이 실제로 생긴다.
+            //   보증하려면 메타가 4종 이하여야 하는데 20종 규모에서는 비현실적이다.
+            //
+            //   그래서 보증 방식을 바꿨다. 이 테스트가 막으려던 것은
+            //   "조합의 개수"가 아니라 "아무 일도 안 일어나는 것"이었고,
+            //   그건 이제 메타의 자체 효과(Self*)가 막는다.
+            //
+            //   ▶ 2군 도입 시 이 테스트를 다음으로 교체할 것:
+            //       메타만_5개인_조합도_바닥값을_넘는다
+            //       — 21개 조합 전부 단축률 15% 이상. 실측 최악 18.0%.
+            //
+            //   근거: docs/부적2군_설계와_계측.md 2장, docs/2군_검증전략.md 4.2장
+            //   ★ 이 테스트가 2군 브랜치에서 빨간불이 되면 '고장'이 아니라 '예정된 교체'다.
+            //      수치를 되돌리지 말고 위 교체안을 쓸 것.
             foreach (var combo in TalismanCatalog.AllCombinations(TalismanSystem.MaxSlots))
             {
                 int primary = 0;
@@ -255,23 +270,56 @@ namespace IdleDefense.Tests
         }
 
         [Test]
-        public void 메타_부적은_혼자서는_배수를_만들지_못한다()
+        public void 메타_부적은_혼자서도_작동하되_원시보다_약하다()
         {
+            // ★ 2026-08-20 계약 교체.
+            //
+            //   옛 계약은 "메타는 혼자서는 아무것도 못 한다"였고, 이 테스트가 그걸 지켰다.
+            //   그런데 그 계약이 바로 바닥값 붕괴의 원인이었다 —
+            //   부적 20종에서는 '메타만 5개'인 조합이 가능해지고,
+            //   그 조합의 단축률이 0.0%로 측정됐다. 부적을 골랐는데 아무 일도 안 일어난다.
+            //   (1군 8종에서는 메타가 4종뿐이라 이 상황이 구조적으로 불가능했다)
+            //
+            //   그래서 메타마다 고유한 자체 효과(Self*)를 주었다. 계약이 둘로 나뉜다:
+            //     ① 메타는 혼자서도 무언가는 한다        — 바닥을 세운다
+            //     ② 그러나 가장 약한 원시보다도 약하다   — 이름값 정합성을 지킨다
+            //
+            //   ②가 진짜 제약이다. 실측에서 자체 효과 지속을 쿨 대비 0.45로 올리면
+            //   바닥은 14.3%까지 오르지만 메타 최고 단독 위력(11.2%)이
+            //   포졸(10.2%)을 넘어선다. 그래서 0.30이 상한으로 확정됐다.
+            //
+            //   근거: docs/부적2군_설계와_계측.md 4장
+            double pojol = TalismanCatalog.Get(TalismanCatalog.Pojol).Magnitude;   // 1.25
+            double jeoseungsaja =
+                TalismanCatalog.Get(TalismanCatalog.Jeoseungsaja).Magnitude;       // 0.65
+
             foreach (var id in new[]
             {
                 TalismanCatalog.Amhaengeosa, TalismanCatalog.Jeonuchi,
                 TalismanCatalog.Cheoyong, TalismanCatalog.Mudang,
             })
             {
+                var t = TalismanCatalog.Get(id);
                 var tal = new TalismanSystem(cfg);
-                tal.Equip(TalismanCatalog.Get(id));
+                tal.Equip(t);
                 tal.Summon(0, TalismanSystem.Lane.Front);
                 tal.Tick(0.1, 0.1);
 
-                Assert.AreEqual(1.0, tal.CurrentDamageMultiplier, 1e-9,
-                    $"{TalismanCatalog.Get(id).DisplayName}이 혼자서 전투력 배수를 만들어냅니다. " +
-                    "메타 부적이 단독으로 값을 내면 조합을 고민할 이유가 사라집니다.");
-                Assert.AreEqual(0.0, tal.ConsumeExecuteFraction(), 1e-9);
+                double mult = tal.CurrentDamageMultiplier;
+                double exec = tal.ConsumeExecuteFraction();   // 한 번만 부른다 — 소모형이다
+
+                // ① 바닥 — 혼자서도 무언가는 해야 한다
+                Assert.IsTrue(mult > 1.0 || exec > 0.0,
+                    $"{t.DisplayName}이 혼자서 아무 일도 하지 않습니다. " +
+                    "메타만 끼운 조합의 단축률이 0%가 되고, 부적을 고른 유저가 아무것도 못 느낍니다.");
+
+                // ② 천장 — 가장 약한 원시(포졸)를 넘으면 안 된다
+                Assert.Less(mult, pojol,
+                    $"{t.DisplayName}의 단독 배수 {mult:F2}가 포졸({pojol:F2})을 넘었습니다. " +
+                    "메타가 전용 피해 부적보다 세면 화면의 숫자를 믿을 수 없게 됩니다.");
+
+                Assert.Less(exec, jeoseungsaja,
+                    $"{t.DisplayName}의 단독 즉시삭제 {exec:F2}가 저승사자({jeoseungsaja:F2})를 넘었습니다.");
             }
         }
 
@@ -650,19 +698,33 @@ namespace IdleDefense.Tests
                 if (r.Seconds > worstSec) { worstSec = r.Seconds; worstName = TalismanCatalog.NameOf(combo); }
             }
 
-            Check(failures, "최선 조합 시간(분)", bestSec / 60.0, 7.78, 0.10);
-            Check(failures, "최악 조합 시간(분)", worstSec / 60.0, 11.77, 0.10);
+            // ★ 2026-08-20 갱신 — 메타 4종에 자체 효과(Self*)가 붙으면서 값이 바뀌었다.
+            //   이전: 최선 7.78 / 최악 11.77   →   현재: 최선 6.79 / 최악 10.54
+            //   메타가 기댈 대상 없이도 일을 하게 되어 양쪽이 모두 빨라졌다.
+            //   근거: docs/부적2군_설계와_계측.md 4장
+            Check(failures, "최선 조합 시간(분)", bestSec / 60.0, 6.79, 0.10);
+            Check(failures, "최악 조합 시간(분)", worstSec / 60.0, 10.54, 0.10);
 
             // 최선 조합의 '이름'은 단언하지 않는다.
-            // 상위 6개가 7.78~7.98분에 몰려 있어 모델 오차 1%면 순위가 뒤집힌다.
+            // 상위 2개가 6.792분으로 동률이라 모델 오차가 없어도 순위가 흔들린다.
             // 그런 실패는 신호가 아니라 잡음이다. 대신 구조적 사실만 단언한다.
             if (bestName == null || !bestName.Contains("장군"))
                 failures.Add($"최선 조합에 장군이 없습니다: [{bestName}] " +
-                             "— 장군은 기여도 1위(+8.9%)라 최선 조합에서 빠질 수 없다");
+                             "— 장군은 기여도 1위라 최선 조합에서 빠질 수 없다");
 
-            // 최악은 2위와 0.45분 벌어져 있어 이름을 못 박아도 안전하다.
-            if (worstName != "저승사자·암행어사·전우치·처용·무당")
-                failures.Add($"최악 조합: 예측 [저승사자·암행어사·전우치·처용·무당] 실측 [{worstName}]");
+            // ★ 최악의 '이름' 단언도 걷어냈다.
+            //   이전에는 1위와 2위가 0.45분 벌어져 있어 이름을 못 박아도 안전했지만,
+            //   자체 효과가 붙으면서 10.538 vs 10.400 — 0.14분으로 좁아졌다.
+            //   이제는 모델 오차 1.5%면 뒤집힌다.
+            //   대신 흔들리지 않는 구조적 사실을 단언한다: 최악은 메타가 4개다.
+            int metaCount = 0;
+            foreach (var id in new[] { TalismanCatalog.Amhaengeosa, TalismanCatalog.Jeonuchi,
+                                       TalismanCatalog.Cheoyong,    TalismanCatalog.Mudang })
+                if (worstName != null && worstName.Contains(TalismanCatalog.Get(id).DisplayName))
+                    metaCount++;
+            if (metaCount < 4)
+                failures.Add($"최악 조합의 메타가 {metaCount}개입니다: [{worstName}] " +
+                             "— 최악은 메타 4개 + 원시 1개여야 한다");
 
             Assert.IsEmpty(failures,
                 "파이썬 복제 모델과 실제 BattleRunner가 어긋났습니다.\n" +
