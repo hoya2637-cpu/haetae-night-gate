@@ -567,7 +567,10 @@ namespace IdleDefense.Game
             float real = Time.deltaTime;
             double battle = real * Math.Max(0.1, Battle.SpeedMultiplier);
             Talismans.Tick(real, battle);
-            Battle.TalismanMultiplier = Talismans.CurrentDamageMultiplier;
+            // 조건부 부적(어둑시니)이 웨이브 잔여 체력을 봐야 하므로 비율을 넘긴다.
+            // CurrentDamageMultiplier(무인자)를 쓰면 항상 만체력으로 계산돼
+            // 어둑시니가 가장 약한 값만 낸다.
+            Battle.TalismanMultiplier = Talismans.DamageMultiplierAt(Battle.WaveHpRatio);
 
             // 저승사자류 즉시 삭제. 꺼내면 사라지므로 두 번 적용될 수 없다.
             // Battle.Tick보다 먼저 넘겨야 같은 프레임에 클리어 판정을 받는다.

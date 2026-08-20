@@ -387,7 +387,13 @@ namespace IdleDefense.Economy
         // ─────────────────────────────────────────
         // UI용 진행률
 
-        /// <summary>현재 웨이브 체력 잔량 0~1.</summary>
+        /// <summary>
+        /// 현재 웨이브 체력 잔량 0~1.
+        ///
+        /// ★ UI 전용이 아니다. 조건부(Conditional) 부적 — 어둑시니 — 이 값을 보고
+        ///   매 틱 배수를 다시 계산한다. 의미를 바꾸면 밸런스가 같이 움직인다.
+        ///   GameController가 Talismans.DamageMultiplierAt(Battle.WaveHpRatio)로 넘긴다.
+        /// </summary>
         public float WaveHpRatio
         {
             get

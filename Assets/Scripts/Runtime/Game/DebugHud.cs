@@ -111,6 +111,9 @@ namespace IdleDefense.Game
             sb.AppendLine();
             Row("SINCE ASCEND", runsSinceAscend < 0 ? "-" : runsSinceAscend.ToString());
             Row("FROM OFFLINE", lastFromOffline ? "YES" : "NO");
+            // 조건부 부적(어둑시니)이 이 값을 보고 배수를 바꾼다.
+            // 배수와 나란히 보이지 않으면 그 축이 실제로 도는지 눈으로 확인할 수가 없다.
+            Row("WAVE HP", b == null ? "-" : $"{b.WaveHpRatio * 100f:F0}%");
             Row("WALLED", b != null && b.IsWalled ? "YES" : "NO");
             Row("OFFLINE", controller.HasPendingOffline ? "PENDING  " + offlineLine : offlineLine);
             sb.AppendLine();
@@ -167,29 +170,60 @@ namespace IdleDefense.Game
             adService.RequestReward(RewardType.SpeedBoost, _ => { }, _ => { });
         }
 
+        /// <summary>효과 축을 한 글자로. 17종이 되면 이름만으로는 무엇이 무엇인지 안 보인다.</summary>
+        private static string AxisTag(TalismanEffect e)
+        {
+            switch (e)
+            {
+                case TalismanEffect.Damage:      return "피";
+                case TalismanEffect.Execute:     return "삭";
+                case TalismanEffect.Amplify:     return "증";
+                case TalismanEffect.Duplicate:   return "복";
+                case TalismanEffect.Haste:       return "쿨";
+                case TalismanEffect.Extend:      return "연";
+                case TalismanEffect.Random:      return "변";
+                case TalismanEffect.Stack:       return "누";
+                case TalismanEffect.Mature:      return "만";
+                case TalismanEffect.Auto:        return "자";
+                case TalismanEffect.Feed:        return "희";
+                case TalismanEffect.Conditional: return "조";
+                default:                         return "?";
+            }
+        }
+
         /// <summary>
-        /// 부적 장착 토글 8종. 게임 UI가 아니라 조합을 갈아끼우며 검증하기 위한 것이다.
+        /// 부적 장착 토글 17종. 게임 UI가 아니라 조합을 갈아끼우며 검증하기 위한 것이다.
         /// 실제 장착 규칙(중복 금지·슬롯 상한·정렬)은 전부 GameController가 판정한다.
         /// 여기서는 목록만 만들어 넘긴다 — HUD는 아무것도 계산하지 않는다.
         /// </summary>
         private void DrawLoadout()
         {
-            float y = 12f;
-            float x = Screen.width - 380f;
+            // 17종이라 한 줄로 세우면 화면을 넘는다. 두 칸으로 접는다.
+            // 오른쪽 강화 버튼(Screen.width - 190)과 겹치지 않도록 왼쪽으로 밀었다.
+            const float colW = 180f, rowH = 30f, rowGap = 3f, colGap = 10f;
+            float x0 = Screen.width - 580f;
+            float y0 = 12f;
 
             var equipped = controller.State?.equippedTalismans ?? EmptyIds;
-            GUI.Label(new Rect(x, y, 180, 26),
-                $"부적 {equipped.Length}/{TalismanSystem.MaxSlots}", labelStyle);
-            y += 30f;
+            GUI.Label(new Rect(x0, y0, 240, 26),
+                $"부적 {equipped.Length}/{TalismanSystem.MaxSlots}   (표시: 축)", labelStyle);
+            y0 += 30f;
+
+            var order = TalismanCatalog.DisplayOrder;
+            int perCol = (order.Length + 1) / 2;
 
             // 카탈로그 선언 순서가 아니라 표시 순서를 쓴다. TalismanCatalog.DisplayOrder 주석 참고.
-            foreach (var id in TalismanCatalog.DisplayOrder)
+            for (int i = 0; i < order.Length; i++)
             {
-                var t = TalismanCatalog.Get(id);
+                var t = TalismanCatalog.Get(order[i]);
                 bool on = Array.IndexOf(equipped, t.Id) >= 0;
-                if (GUI.Button(new Rect(x, y, 180, 30), (on ? "■ " : "□ ") + t.DisplayName))
+
+                float bx = x0 + (i / perCol) * (colW + colGap);
+                float by = y0 + (i % perCol) * (rowH + rowGap);
+
+                string label = (on ? "■ " : "□ ") + t.DisplayName + "  " + AxisTag(t.Effect);
+                if (GUI.Button(new Rect(bx, by, colW, rowH), label))
                     ToggleTalisman(t.Id, on);
-                y += 33f;
             }
         }
 
@@ -243,7 +277,9 @@ namespace IdleDefense.Game
             }
 
             GUI.Label(new Rect(x + 8f, y + 4f, 260, 26),
-                $"부적배수 x{controller.Talismans.CurrentDamageMultiplier:F2}" +
+                // 무인자 버전은 항상 만체력으로 계산해 어둑시니가 가장 약하게 보인다.
+                // 화면과 실제 전투 계산이 어긋나면 그 순간 이 HUD는 쓸모가 없다.
+                $"부적배수 x{controller.Talismans.DamageMultiplierAt(controller.Battle != null ? controller.Battle.WaveHpRatio : 1f):F2}" +
                 $"  활성 {controller.Talismans.ActiveCount}" +
                 $"  대기 {controller.Talismans.PendingCount}", labelStyle);
         }

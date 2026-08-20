@@ -45,6 +45,17 @@ namespace IdleDefense.Economy
         public const string Cheoyong = "cheoyong";
         public const string Mudang = "mudang";
 
+        // ── 2군 9종 ──
+        public const string Ganggamchan = "ganggamchan";
+        public const string Eoduksini   = "eoduksini";
+        public const string Jangseung   = "jangseung";
+        public const string Gumiho      = "gumiho";
+        public const string Imugi       = "imugi";
+        public const string Sansin      = "sansin";
+        public const string Kkachi      = "kkachi";
+        public const string Bulgasari   = "bulgasari";
+        public const string Dokkaebi    = "dokkaebi";
+
         /// <summary>1군 8종. 순서는 고정이며 조합 인덱스의 기준이 된다.</summary>
         public static IReadOnlyList<TalismanSystem.Talisman> FirstGroup => firstGroup;
 
@@ -167,6 +178,146 @@ namespace IdleDefense.Economy
         };
 
         /// <summary>
+        /// 부적 2군 9종. 초안 12종에서 겹치는 3종(야차·바리데기·삼족오)을 제외했다.
+        ///
+        /// 제외 근거 — 같은 축에서 하는 일이 겹쳤다:
+        ///   야차(Execute 40%/28초)   ← 저승사자(65%/45초)의 하위호환. 기여도 -1.12%
+        ///   바리데기(되살림)          ← 전우치(복제)와 하는 일이 같다. 기여도 -6.23% (최하위)
+        ///   삼족오(Extend +4.0/45초) ← 무당(+5.0/65초)과 거의 동일
+        ///
+        /// 이 제외가 바닥 문제를 통째로 해결했다.
+        ///   바닥(원시 1개 이상) 15.1% → 18.3%
+        ///   원시 0개 조합 126개(최악 10.8%) → 21개(최악 18.0%)
+        ///
+        /// ★ 바닥이 낮으면 메타를 강화하기 전에 겹치는 부적부터 찾아라.
+        ///   문제는 메타가 약한 게 아니라 같은 일을 하는 부적이 슬롯을 채우는 것이었다.
+        ///
+        /// 근거: docs/부적2군_설계와_계측.md
+        /// </summary>
+        public static IReadOnlyList<TalismanSystem.Talisman> SecondGroup => secondGroup;
+
+        private static readonly TalismanSystem.Talisman[] secondGroup =
+        {
+            // ── 새로운 결 6종 — 조합 수가 아니라 '조작의 결'을 늘린다 ──
+
+            // 도깨비 — 변덕. 소환마다 기존 6축 중 하나를 무작위로 발동한다.
+            // 1군은 전부 결정론이라 '운'이 유일하게 새로운 결이다.
+            // 롤 테이블은 TalismanSystem.RollTable — 원시 가중 D3:X2:기타1.
+            new TalismanSystem.Talisman
+            {
+                Id = Dokkaebi, DisplayName = "도깨비",
+                Effect = TalismanEffect.Random,
+                Magnitude = 0.0, BaseDuration = 0.0, Cooldown = 40.0,
+            },
+
+            // 구미호 — 누적. 꼬리가 아홉이라 8스택이 끝이다.
+            // 오래 쓸수록 세지므로 '일찍 깔아두는' 조작을 보상한다.
+            new TalismanSystem.Talisman
+            {
+                Id = Gumiho, DisplayName = "구미호",
+                Effect = TalismanEffect.Stack,
+                Magnitude = 1.15, BaseDuration = 8.0, Cooldown = 35.0,
+                StackStep = 0.05, StackCap = 8,
+            },
+
+            // 이무기 — 만숙. 천 년을 기다려 용이 된다.
+            // 배수 1.0에서 시작해 초당 0.06씩 자란다. 15초를 다 채우면 1.90.
+            // Magnitude는 쓰이지 않는다 — 시작값이 항상 1.0이다.
+            new TalismanSystem.Talisman
+            {
+                Id = Imugi, DisplayName = "이무기",
+                Effect = TalismanEffect.Mature,
+                Magnitude = 1.0, BaseDuration = 15.0, Cooldown = 60.0,
+                GrowPerSecond = 0.06,
+            },
+
+            // 장승 — 자동. 쿨이 끝나면 스스로 발동한다.
+            //
+            // ★ 17종 중 유일하게 조작이 필요 없는 부적이다.
+            //   1군 8종은 전부 '눌러야 값이 나는' 부적이라,
+            //   방치형인데 방치하면 손해라는 모순이 있었다. 자동 축이 그걸 푼다.
+            //
+            //   가치는 '안 누를 때'만 보인다 (실측):
+            //     idle     장승 포함 8.8%  vs 미포함 -0.4%   → +9.16%p
+            //     greedy   34.4% vs 33.8%                    → +0.61%p
+            //   즉 AutoSummon을 산 유저에게는 거의 값이 없다. 그게 의도다 —
+            //   9.16%p는 AutoSummon 전체 가치의 29%이며, 전환 퍼널로 작동한다.
+            new TalismanSystem.Talisman
+            {
+                Id = Jangseung, DisplayName = "장승",
+                Effect = TalismanEffect.Auto, IsAuto = true,
+                Magnitude = 1.30, BaseDuration = 10.0, Cooldown = 30.0,
+            },
+
+            // 불가사리 — 희생. 쇠를 먹고 자란다.
+            // 남은 쿨이 가장 큰 다른 부적을 골라 '절반만' 먹고 그만큼 세진다.
+            // ★ 전부 먹게 두면(쿨 0) 대형 단발이 무한 반복되어 최선 조합이 85%까지 튄다.
+            new TalismanSystem.Talisman
+            {
+                Id = Bulgasari, DisplayName = "불가사리",
+                Effect = TalismanEffect.Feed,
+                Magnitude = 1.0, BaseDuration = 6.0, Cooldown = 70.0,
+                FeedPerSecond = 60.0, FeedCap = 0.5,
+            },
+
+            // 어둑시니 — 조건부. 어두울수록 커진다.
+            // 웨이브 잔여 체력이 낮을수록 배수가 오른다. 만체력 1.35, 빈사 1.70.
+            // 배수는 매 틱 다시 계산된다 — 소환 시점이 아니라 '지금'의 체력을 본다.
+            new TalismanSystem.Talisman
+            {
+                Id = Eoduksini, DisplayName = "어둑시니",
+                Effect = TalismanEffect.Conditional,
+                Magnitude = 1.35, BaseDuration = 7.0, Cooldown = 45.0,
+                CondFactor = 2.0,
+            },
+
+            // ── 기존 축 심화 3종 ──
+
+            // 강감찬 — 대형 단발. 장군보다 세고 느리다.
+            new TalismanSystem.Talisman
+            {
+                Id = Ganggamchan, DisplayName = "강감찬",
+                Effect = TalismanEffect.Damage,
+                Magnitude = 2.20, BaseDuration = 5.0, Cooldown = 55.0,
+            },
+
+            // 산신 — 증폭. 암행어사보다 세고 짧다.
+            // 축이 암행어사와 겹치지만 수치대가 달라 다른 선택지로 기능한다(수용된 겹침).
+            new TalismanSystem.Talisman
+            {
+                Id = Sansin, DisplayName = "산신",
+                Effect = TalismanEffect.Amplify,
+                Magnitude = 0.75, BaseDuration = 8.0, Cooldown = 55.0,
+                // 호랑이가 문다 — 증폭할 대상이 없을 때만.
+                SelfEffect = TalismanEffect.Damage, SelfMagnitude = 1.18, SelfAlways = false,
+            },
+
+            // 까치호랑이 — 쿨감. 처용의 계단 문제(1군 7.1장)를 다른 수치대에서 재시도한다.
+            // 17종 중 유일하게 기여도가 양수인 메타다(+0.04%).
+            new TalismanSystem.Talisman
+            {
+                Id = Kkachi, DisplayName = "까치호랑이",
+                Effect = TalismanEffect.Haste,
+                Magnitude = 0.25, BaseDuration = 0.0, Cooldown = 40.0,
+                // 까치가 운다 — 쿨감은 언제나 작동하므로 자체 효과도 항상 붙는다.
+                SelfEffect = TalismanEffect.Damage, SelfMagnitude = 1.10, SelfAlways = true,
+            },
+        };
+
+        /// <summary>전체 17종. 장착·조회는 이걸 본다.</summary>
+        public static IReadOnlyList<TalismanSystem.Talisman> All => all;
+
+        private static readonly TalismanSystem.Talisman[] all = BuildAll();
+
+        private static TalismanSystem.Talisman[] BuildAll()
+        {
+            var result = new TalismanSystem.Talisman[firstGroup.Length + secondGroup.Length];
+            Array.Copy(firstGroup, 0, result, 0, firstGroup.Length);
+            Array.Copy(secondGroup, 0, result, firstGroup.Length, secondGroup.Length);
+            return result;
+        }
+
+        /// <summary>
         /// 기본 장착 5종. 고정 지급이므로 8종 모두 보유하고 있고, 이건 '무엇을 끼고 있는가'다.
         /// 원시 3 + 즉발 1 + 메타 1 — 메타 부적이 무엇인지 배우게 하는 구성이다.
         /// </summary>
@@ -190,8 +341,12 @@ namespace IdleDefense.Economy
         /// </summary>
         public static readonly string[] DisplayOrder =
         {
+            // 1군 — 원시 먼저, 그 안에서 저승사자가 첫 칸
             Jeoseungsaja, Janggun, Hongildong, Pojol,
-            Amhaengeosa, Jeonuchi, Cheoyong, Mudang,
+            // 2군 원시
+            Ganggamchan, Imugi, Eoduksini, Gumiho, Jangseung, Dokkaebi,
+            // 메타
+            Amhaengeosa, Sansin, Jeonuchi, Cheoyong, Kkachi, Mudang, Bulgasari,
         };
 
         /// <summary>표시 순서상 위치. 목록에 없으면 맨 뒤로 보낸다.</summary>
@@ -204,8 +359,8 @@ namespace IdleDefense.Economy
 
         public static bool Exists(string id)
         {
-            for (int i = 0; i < firstGroup.Length; i++)
-                if (firstGroup[i].Id == id) return true;
+            for (int i = 0; i < all.Length; i++)
+                if (all[i].Id == id) return true;
             return false;
         }
 
@@ -237,13 +392,21 @@ namespace IdleDefense.Economy
 
         public static TalismanSystem.Talisman Get(string id)
         {
-            for (int i = 0; i < firstGroup.Length; i++)
-                if (firstGroup[i].Id == id) return firstGroup[i];
-            throw new ArgumentException($"1군에 없는 부적입니다: {id}", nameof(id));
+            for (int i = 0; i < all.Length; i++)
+                if (all[i].Id == id) return all[i];
+            throw new ArgumentException($"카탈로그에 없는 부적입니다: {id}", nameof(id));
         }
 
         /// <summary>
-        /// 슬롯 수만큼 고르는 조합 전수. 8종 5슬롯이면 56가지다.
+        /// 슬롯 수만큼 고르는 조합 전수. **1군 8종 전용이다.**
+        ///
+        /// ★ 여기를 17종으로 넓히지 마라.
+        ///   C(17,5) = 6,188이라 이 함수를 도는 테스트 7개가 각각 110배로 늘어난다.
+        ///   전수는 Unity가 아니라 파이썬(sim/tal2.py)이 돈다 — 6,188조합 x 3정책이 5분이다.
+        ///   Unity는 파이썬이 찾은 극단 조합 + 고정시드 표본만 회귀 감시한다.
+        ///   근거: docs/2군_검증전략.md 1장, 5장
+        ///
+        /// 8종 5슬롯이면 56가지다.
         /// 각 원소는 firstGroup의 인덱스 배열이다.
         /// </summary>
         public static List<int[]> AllCombinations(int slots)

@@ -96,7 +96,8 @@ namespace IdleDefense.Tests
                 if (policy != Policy.None) Summon(tal, policy, ref summons);
 
                 tal.Tick(dt, dt);
-                runner.TalismanMultiplier = tal.CurrentDamageMultiplier;
+                // GameController와 같은 배선이어야 한다. 조건부 부적이 체력 비율을 본다.
+                runner.TalismanMultiplier = tal.DamageMultiplierAt(runner.WaveHpRatio);
 
                 double execute = tal.ConsumeExecuteFraction();
                 if (execute > 0.0) runner.ExecuteFraction(execute);
@@ -186,23 +187,23 @@ namespace IdleDefense.Tests
             // 유저는 그게 자기 잘못인지 설계 잘못인지 알 수 없다.
             // 1군을 원시 4 + 메타 4로 짠 이유가 이것이며, 그래서 구조적으로 불가능하다.
             //
-            // ★★ 2군이 들어오면 이 테스트는 반드시 깨진다. 설계상 그렇다.
+            // ★★ 이 보증은 1군 8종에서만 성립한다.
             //
-            //   17종이 되면 메타가 7종(암행어사·전우치·처용·무당·산신·까치호랑이·불가사리)이라
+            //   17종 전체로 넓히면 메타가 7종(암행어사·전우치·처용·무당·산신·까치호랑이·불가사리)이라
             //   C(7,5) = 21개의 '메타만 5개' 조합이 실제로 생긴다.
             //   보증하려면 메타가 4종 이하여야 하는데 20종 규모에서는 비현실적이다.
             //
-            //   그래서 보증 방식을 바꿨다. 이 테스트가 막으려던 것은
-            //   "조합의 개수"가 아니라 "아무 일도 안 일어나는 것"이었고,
-            //   그건 이제 메타의 자체 효과(Self*)가 막는다.
+            //   그래서 AllCombinations를 1군 전용으로 못 박았고, 이 테스트는 계속 유효하다.
             //
-            //   ▶ 2군 도입 시 이 테스트를 다음으로 교체할 것:
-            //       메타만_5개인_조합도_바닥값을_넘는다
-            //       — 21개 조합 전부 단축률 15% 이상. 실측 최악 18.0%.
+            //   17종에서는 보증 방식이 다르다. 이 테스트가 막으려던 것은
+            //   "조합의 개수"가 아니라 "아무 일도 안 일어나는 것"이었고,
+            //   그건 메타의 자체 효과(Self*)가 막는다.
+            //   실측: 메타만 5개인 21개 조합의 최악 단축률 18.0% (기준 15%).
+            //
+            //   ★ 누군가 AllCombinations를 17종으로 넓히면 이 테스트가 빨간불이 된다.
+            //     그때 되돌려야 할 것은 부적 수치가 아니라 AllCombinations다.
             //
             //   근거: docs/부적2군_설계와_계측.md 2장, docs/2군_검증전략.md 4.2장
-            //   ★ 이 테스트가 2군 브랜치에서 빨간불이 되면 '고장'이 아니라 '예정된 교체'다.
-            //      수치를 되돌리지 말고 위 교체안을 쓸 것.
             foreach (var combo in TalismanCatalog.AllCombinations(TalismanSystem.MaxSlots))
             {
                 int primary = 0;
@@ -321,6 +322,185 @@ namespace IdleDefense.Tests
                 Assert.Less(exec, jeoseungsaja,
                     $"{t.DisplayName}의 단독 즉시삭제 {exec:F2}가 저승사자({jeoseungsaja:F2})를 넘었습니다.");
             }
+        }
+
+        [Test]
+        public void 어떤_부적도_배수를_1_미만으로_만들지_않는다()
+        {
+            // ★ 실제로 났던 버그의 회귀 감시다.
+            //
+            //   자동 소환 감쇠(Damp)는 축마다 기준이 다르다:
+            //     '1이 기준'(Damage 계열)  →  1 + (m-1) x eff
+            //     '0이 기준'(Execute 등)   →  m x eff
+            //
+            //   2군 축(Auto/Stack/Mature/Feed/Conditional)을 Damp의 목록에 안 넣으면
+            //   default 분기로 새서 배수 자체에 효율이 곱해진다.
+            //   장승이 1.30 x 0.75 = 0.975가 됐다 — 부적을 켰는데 DPS가 줄었다.
+            //
+            //   화면에 x0.98이 떠서 발견했다. 테스트가 아니라 눈이 잡았다.
+            //   같은 실수는 새 축을 추가할 때마다 재발할 수 있으므로 여기서 못 박는다.
+            //
+            // 계약: 부적은 속도를 '올리거나 그대로' 둔다. 절대 늦추지 않는다.
+            foreach (var t in TalismanCatalog.All)
+            {
+                foreach (bool auto in new[] { false, true })
+                {
+                    var tal = new TalismanSystem(cfg);
+                    tal.Equip(TalismanCatalog.Get(t.Id));
+                    tal.SetRandomSeed(20260820);
+
+                    // 변덕(도깨비)은 뽑기마다 다른 축이 나온다. 여러 번 굴려 전부 확인한다.
+                    int tries = t.Effect == TalismanEffect.Random ? 40 : 1;
+                    for (int k = 0; k < tries; k++)
+                    {
+                        tal.Summon(0, TalismanSystem.Lane.Front, isAuto: auto);
+                        tal.Tick(0.1, 0.1);
+
+                        // 체력 비율 양 끝을 다 본다 — 조건부는 비율에 따라 값이 바뀐다.
+                        foreach (double ratio in new[] { 1.0, 0.5, 0.0 })
+                        {
+                            double m = tal.DamageMultiplierAt(ratio);
+                            Assert.GreaterOrEqual(m, 1.0 - 1e-9,
+                                $"{t.DisplayName}({t.Effect}) auto={auto} hp={ratio:F1} 에서 " +
+                                $"배수가 {m:F3}입니다. 부적이 DPS를 깎고 있습니다.\n" +
+                                "Damp()의 '1이 기준' 목록에 이 축이 빠졌을 가능성이 높습니다.");
+                        }
+
+                        // 쿨을 흘려 다음 소환이 가능하게 한다.
+                        tal.Tick(t.Cooldown + 1.0, 0.0);
+                    }
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────
+        // 2군 새 축 — 각 축이 실제로 그 축답게 도는가
+        //
+        // 처음엔 이걸 "Play에서 눈으로 확인"으로 넘기려 했다. 잘못된 판단이었다.
+        // 눈이 필요한 것은 x0.98 같은 '이상함'을 알아차리는 일이고,
+        // "시간이 갈수록 커지는가" 같은 건 기계가 훨씬 정확하게 본다.
+
+        [Test]
+        public void 장승은_아무도_누르지_않아도_스스로_발동한다()
+        {
+            // 이 부적의 존재 이유다. AutoSummon(구슬 1500)을 안 산 유저에게만 값이 나온다.
+            // 자동 발동을 if (AutoSummon) 안에 넣으면 산 사람만 쓸 수 있게 되어
+            // 부적 자체가 무의미해진다.
+            var tal = new TalismanSystem(cfg);
+            tal.Equip(TalismanCatalog.Get(TalismanCatalog.Jangseung));
+
+            Assert.IsFalse(tal.AutoSummon, "AutoSummon이 기본으로 켜져 있으면 이 테스트는 무의미합니다.");
+
+            // ★ Tick을 한 번만 크게 부르면 안 된다.
+            //   자동 발동은 Tick의 '맨 마지막'에 일어나므로,
+            //   그 Tick 안에서는 배치 지연(중앙 1.0초)이 풀리지 않는다.
+            //   게임에서는 매 프레임 Tick이 도니 자연히 풀린다.
+            //   테스트도 같은 방식으로 여러 번 돌려야 실제와 같은 조건이 된다.
+            for (int i = 0; i < 6; i++) tal.Tick(0.5, 0.5);
+
+            Assert.Greater(tal.ActiveCount, 0,
+                "장승이 스스로 발동하지 않았습니다. 자동 축의 존재 이유가 사라집니다.");
+            Assert.Greater(tal.Equipped[0].CooldownRemaining, 0.0,
+                "발동했는데 쿨타임이 안 걸렸습니다. 매 틱 무한 소환됩니다.");
+        }
+
+        [Test]
+        public void 이무기는_깔려있는_시간에_비례해_강해진다()
+        {
+            var tal = new TalismanSystem(cfg);
+            tal.Equip(TalismanCatalog.Get(TalismanCatalog.Imugi));
+            tal.Summon(0, TalismanSystem.Lane.Front);   // 지연 0
+
+            tal.Tick(1.0, 1.0);
+            double early = tal.DamageMultiplierAt(1.0);
+            tal.Tick(4.0, 4.0);
+            double late = tal.DamageMultiplierAt(1.0);
+
+            Assert.Greater(late, early,
+                $"이무기가 자라지 않습니다 (1초 {early:F3} → 5초 {late:F3}). " +
+                "BornAt이 안 찍혔거나 EffectiveMagnitude가 Grow를 안 보고 있습니다.");
+            Assert.GreaterOrEqual(early, 1.0, "시작 배수는 1.0 이상이어야 합니다.");
+        }
+
+        [Test]
+        public void 어둑시니는_웨이브가_죽어갈수록_강해진다()
+        {
+            var tal = new TalismanSystem(cfg);
+            tal.Equip(TalismanCatalog.Get(TalismanCatalog.Eoduksini));
+            tal.Summon(0, TalismanSystem.Lane.Front);
+            tal.Tick(0.1, 0.1);
+
+            double full = tal.DamageMultiplierAt(1.0);   // 만체력 — 가장 약함
+            double half = tal.DamageMultiplierAt(0.5);
+            double dying = tal.DamageMultiplierAt(0.0);  // 빈사 — 가장 강함
+
+            Assert.Greater(dying, half, "체력이 낮을수록 강해져야 합니다.");
+            Assert.Greater(half, full, "체력이 낮을수록 강해져야 합니다.");
+
+            // ★ 이 배선이 실제로 물려 있는지가 핵심이다.
+            //   GameController가 DamageMultiplierAt(Battle.WaveHpRatio)로 넘기지 않으면
+            //   어둑시니는 영원히 full 값만 낸다 — 테스트는 통과하는데 게임에선 반쪽이 된다.
+            Assert.Greater(dying, full * 1.1,
+                "빈사와 만체력의 차이가 너무 작습니다. CondFactor가 안 걸렸을 수 있습니다.");
+        }
+
+        [Test]
+        public void 구미호는_소환할수록_강해지되_아홉_꼬리에서_멈춘다()
+        {
+            var tal = new TalismanSystem(cfg);
+            var gumiho = TalismanCatalog.Get(TalismanCatalog.Gumiho);
+            tal.Equip(gumiho);
+
+            double prev = 0.0;
+            for (int i = 0; i <= 9; i++)
+            {
+                tal.Summon(0, TalismanSystem.Lane.Front);
+                tal.Tick(0.01, 0.01);
+                double m = tal.DamageMultiplierAt(1.0);
+
+                if (i > 0 && i <= gumiho.StackCap)
+                    Assert.Greater(m, prev,
+                        $"{i + 1}번째 소환인데 배수가 안 늘었습니다 ({prev:F3} → {m:F3}).");
+                else if (i > gumiho.StackCap)
+                    Assert.AreEqual(prev, m, 1e-9,
+                        $"꼬리가 아홉인데 {i + 1}번째에도 계속 늘어납니다. 상한이 안 걸렸습니다.");
+
+                prev = m;
+                tal.Tick(200.0, 200.0);   // 효과 만료 + 쿨 회복
+            }
+        }
+
+        [Test]
+        public void 불가사리는_남의_쿨을_절반만_먹는다()
+        {
+            var tal = new TalismanSystem(cfg);
+            tal.Equip(TalismanCatalog.Get(TalismanCatalog.Janggun));      // 슬롯 0
+            tal.Equip(TalismanCatalog.Get(TalismanCatalog.Bulgasari));    // 슬롯 1
+
+            tal.Summon(0, TalismanSystem.Lane.Front);
+            double before = tal.Equipped[0].CooldownRemaining;
+            Assert.Greater(before, 0.0);
+
+            Assert.IsTrue(tal.Summon(1, TalismanSystem.Lane.Front), "먹을 쿨이 있는데 거부됐습니다.");
+            double after = tal.Equipped[0].CooldownRemaining;
+
+            // ★ 전부 먹게 두면(쿨 0) 대형 단발이 무한 반복되어
+            //   최선 조합의 단축률이 85%까지 튄다 (실측).
+            Assert.AreEqual(before * 0.5, after, 1e-6,
+                $"희생자의 쿨이 {before:F1} → {after:F1}. 절반만 먹어야 합니다.");
+        }
+
+        [Test]
+        public void 불가사리는_먹을것이_없으면_쿨을_쓰지_않는다()
+        {
+            // 헛발질에 대가를 물리지 않는다. 쿨을 태우면 혼자 끼웠을 때 완전히 죽는다.
+            var tal = new TalismanSystem(cfg);
+            tal.Equip(TalismanCatalog.Get(TalismanCatalog.Bulgasari));
+
+            Assert.IsFalse(tal.Summon(0, TalismanSystem.Lane.Front),
+                "먹을 대상이 없는데 소환이 성공했습니다.");
+            Assert.AreEqual(0.0, tal.Equipped[0].CooldownRemaining, 1e-9,
+                "실패했는데 쿨타임을 썼습니다.");
         }
 
         [Test]
