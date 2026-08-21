@@ -457,6 +457,16 @@ namespace IdleDefense.Game
         /// </summary>
         public const int YutRewardedPlaysPerDay = 2;
 
+        /// <summary>
+        /// 광고 없이 보상을 받는 판. 나머지 한 판은 광고가 있어야 보상이 붙는다.
+        ///
+        /// ★ 광고를 **안 봐도 게임은 계속 돌아간다.** 광고가 막는 것은 보상이지 놀이가 아니다.
+        ///   무료 판을 다 쓴 뒤에도 던지기 버튼은 그대로 살아 있고, 배수만 안 붙는다.
+        ///   미니게임에 자물쇠를 채우는 순간 그건 광고 시청 창구가 되고,
+        ///   그러면 "재미있어서 논다"는 신호를 영영 못 읽는다.
+        /// </summary>
+        public const int YutFreePlaysPerDay = 1;
+
         /// <summary>위로상 엽전 = 현재 웨이브 보상의 이 배수.</summary>
         private const double YutConsolationWaves = 2.0;
 
@@ -472,6 +482,12 @@ namespace IdleDefense.Game
         public bool YutInProgress { get; private set; }
         public int YutRewardedPlaysLeft
             => Math.Max(0, YutRewardedPlaysPerDay - (State?.yutPlaysToday ?? 0));
+
+        /// <summary>그냥 눌러도 보상이 붙는 판이 남았는가.</summary>
+        public bool YutFreeRewardLeft => (State?.yutPlaysToday ?? 0) < YutFreePlaysPerDay;
+
+        /// <summary>광고를 보면 보상판이 한 판 더 생기는가. 무료 판이 남았으면 false다.</summary>
+        public bool YutAdRewardAvailable => !YutFreeRewardLeft && YutRewardedPlaysLeft > 0;
 
         public struct YutSummary
         {
@@ -493,14 +509,47 @@ namespace IdleDefense.Game
         /// <summary>
         /// 판을 시작한다. 상한을 넘었으면 보상 없이 시작된다 — 거절하지 않는다.
         /// </summary>
-        public void BeginYut()
+        public void BeginYut() => BeginYutInternal(YutFreeRewardLeft);
+
+        /// <summary>
+        /// 광고를 끝까지 본 사람에게 보상판을 한 판 더 연다.
+        ///
+        /// ★ 토큰이 없으면 열지 않는다. "광고 버튼을 눌렀다"와 "광고를 끝까지 봤다"는
+        ///   절대 같은 사건이 아니다 — 화면에서 true 하나를 넘겨 보상을 받는 경로를 만들지 마라.
+        /// ★ 무료 판이 남아 있으면 거절한다. 그렇지 않으면 유저가 무료 판을 놔두고
+        ///   광고를 봐서 하루 세 판을 만들 수 있다.
+        /// </summary>
+        public bool BeginYutWithRewardedAd(RewardedAdService.RewardToken token)
+        {
+            if (YutInProgress) return false;
+            if (!YutAdRewardAvailable) return false;
+            if (!Verify(token, RewardType.YutExtraPlay)) return false;
+            BeginYutInternal(rewarded: true);
+            return true;
+        }
+
+        /// <summary>
+        /// 광고를 띄우고, 끝까지 봤으면 보상판을 연다.
+        ///
+        /// ★ 토큰이 이 클래스 밖으로 나가지 않는다. 화면은 "열렸다/안 열렸다"만 받는다.
+        ///   화면이 토큰을 들고 있으면 언젠가 화면 코드가 토큰을 만들어낸다.
+        /// </summary>
+        public void RequestYutAdPlay(Action<bool> done = null)
+        {
+            if (adService == null || !YutAdRewardAvailable) { done?.Invoke(false); return; }
+            adService.RequestReward(RewardType.YutExtraPlay,
+                token => done?.Invoke(BeginYutWithRewardedAd(token)),
+                _ => done?.Invoke(false));
+        }
+
+        private void BeginYutInternal(bool rewarded)
         {
             if (YutInProgress) return;
             if (yut == null) yut = new YutGame();
 
             yutThrows.Clear();
             yutCalls.Clear();
-            yutRewardedThisPlay = YutRewardedPlaysLeft > 0;
+            yutRewardedThisPlay = rewarded;
             YutInProgress = true;
         }
 
@@ -599,12 +648,13 @@ namespace IdleDefense.Game
         {
             if (ids == null || ids.Length == 0) return ids;
 
-            int tier = State != null ? State.tier : 1;
-            int best = State != null ? State.bestWave : 0;
+            int tier  = State != null ? State.tier : 1;
+            int best  = State != null ? State.bestWave : 0;
+            int plays = State != null ? State.totalPlays : 0;
 
             var kept = new List<string>(ids.Length);
             for (int i = 0; i < ids.Length; i++)
-                if (TalismanCatalog.IsUnlocked(ids[i], tier, best)) kept.Add(ids[i]);
+                if (TalismanCatalog.IsUnlocked(ids[i], tier, best, plays)) kept.Add(ids[i]);
 
             return kept.Count == ids.Length ? ids : kept.ToArray();
         }

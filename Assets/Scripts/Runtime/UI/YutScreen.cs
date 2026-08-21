@@ -57,6 +57,11 @@ namespace IdleDefense.UI
         private Text callLabel;
         private Button throwButton;
         private Text throwLabel;
+        private GameObject adGo;
+        private Text adLabel;
+        private bool adInFlight;
+
+        private const string AdLabelText = "광고 보고 보상 한 판 더";
 
         /// <summary>
         /// 윷가락 하나. **배와 등이 있다는 것이 이 게임의 전부다.**
@@ -425,8 +430,10 @@ namespace IdleDefense.UI
                 multText.text = summary.Rewarded
                     ? $"이번 밤 부적  x{summary.Multiplier:F2}"
                     : "보상 없이 논 판";
-                RefreshLimit();
             }
+
+            // 판이 끝나면 광고 버튼이 다시 뜰 수 있다. 요약 유무와 무관하게 갱신한다.
+            RefreshLimit();
         }
 
         /// <summary>
@@ -593,6 +600,43 @@ namespace IdleDefense.UI
             noteText.text = left > 0
                 ? "던지기 전에 부릅니다 · 맞히면 두 배, 빗나가면 이번 판은 없음"
                 : "보상은 없지만 계속 놀 수 있습니다";
+
+            bool showAd = controller.YutAdRewardAvailable
+                          && !controller.YutInProgress
+                          && !adInFlight;
+            if (adGo != null && adGo.activeSelf != showAd) adGo.SetActive(showAd);
+        }
+
+        /// <summary>
+        /// 광고를 부른다. **토큰은 여기까지 오지 않는다** —
+        /// GameController가 검증까지 마치고 열렸는지만 알려준다.
+        /// 화면이 토큰을 들고 있으면 언젠가 화면 코드가 토큰을 만들어낸다.
+        /// </summary>
+        private void RequestAdPlay()
+        {
+            if (adInFlight) return;
+            adInFlight = true;
+            adLabel.text = "부르는 중…";
+            RefreshLimit();
+
+            controller.RequestYutAdPlay(opened =>
+            {
+                adInFlight = false;
+                adLabel.text = AdLabelText;
+
+                if (opened)
+                {
+                    // 판이 이미 열린 상태로 돌아온다. Throw()의 '새 판' 정리가 안 도니 여기서 한다.
+                    ClearChain();
+                    RestSticks();
+                    bigText.text = "";
+                    bigText.rectTransform.localScale = Vector3.one;
+                    againText.text = "";
+                    multText.text = "";
+                    throwLabel.text = "던지기";
+                }
+                RefreshLimit();
+            });
         }
 
         // ─────────────────────────────────────────
@@ -715,7 +759,7 @@ namespace IdleDefense.UI
             // 아래 — 부르기 / 던지기 / 상한
             var foot = NewRect("Foot", panel);
             Anchor(foot, new Vector2(0f, 0f), new Vector2(1f, 0f),
-                   new Vector2(0f, 0f), new Vector2(0f, 430f));
+                   new Vector2(0f, 0f), new Vector2(0f, 470f));
             AddImage(foot, UiTheme.Panel);
 
             // ★ 이게 버튼으로 안 보였다. "먼저 누르고 던지는 건가?"라고 물으신 것이 증거다.
@@ -749,18 +793,31 @@ namespace IdleDefense.UI
 
             noteText = NewText("Note", foot, UiTheme.FontSmall, UiTheme.TextDim);
             Anchor(noteText.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f),
-                   new Vector2(0f, -150f), new Vector2(0f, -110f));
+                   new Vector2(0f, -164f), new Vector2(0f, -124f));
+
+            // ★ 광고 버튼은 **보상판이 남았을 때만** 존재한다.
+            //   회색으로 늘 떠 있으면 "광고를 봐야 하는 게임"으로 읽히고,
+            //   그건 이 미니게임이 하려던 일의 정반대다.
+            //   조건일 때만 나타나는 것 자체가 "지금이 그때다"라는 신호가 된다.
+            var ad = NewButton("Ad", foot, AdLabelText, UiTheme.FontName);
+            adGo = ad.gameObject;
+            adLabel = ad.GetComponentInChildren<Text>();
+            Anchor(ad.GetComponent<RectTransform>(), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
+                   new Vector2(-300f, 190f), new Vector2(300f, 262f));
+            SetImage(adGo, UiTheme.AccentDim);
+            ad.onClick.AddListener(RequestAdPlay);
+            adGo.SetActive(false);
 
             throwButton = NewButton("Throw", foot, "던지기", UiTheme.FontTitle);
             Anchor(throwButton.GetComponent<RectTransform>(), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
-                   new Vector2(-300f, 90f), new Vector2(300f, 190f));
+                   new Vector2(-300f, 76f), new Vector2(300f, 176f));
             SetImage(throwButton.gameObject, UiTheme.Accent);
             throwLabel = throwButton.GetComponentInChildren<Text>();
             throwButton.onClick.AddListener(Throw);
 
             limitText = NewText("Limit", foot, UiTheme.FontTiny, UiTheme.TextLocked);
             Anchor(limitText.rectTransform, new Vector2(0f, 0f), new Vector2(1f, 0f),
-                   new Vector2(0f, 30f), new Vector2(0f, 80f));
+                   new Vector2(0f, 20f), new Vector2(0f, 68f));
         }
 
         // ─────────────────────────────────────────

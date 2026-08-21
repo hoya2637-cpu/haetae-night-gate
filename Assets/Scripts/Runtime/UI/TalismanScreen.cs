@@ -244,6 +244,7 @@ namespace IdleDefense.UI
             var state = controller.State;
             int tier = state != null ? state.tier : 1;
             int best = state != null ? state.bestWave : 0;
+            int plays = state != null ? state.totalPlays : 0;
             var equipped = state != null && state.equippedTalismans != null
                 ? state.equippedTalismans : new string[0];
 
@@ -255,7 +256,7 @@ namespace IdleDefense.UI
                 var c = cards[i];
                 var t = TalismanCatalog.Get(c.Id);
 
-                bool unlocked = TalismanCatalog.IsUnlocked(c.Id, tier, best);
+                bool unlocked = TalismanCatalog.IsUnlocked(c.Id, tier, best, plays);
                 bool on = System.Array.IndexOf(equipped, c.Id) >= 0;
 
                 c.Art.sprite = ArtLibrary.Card(c.Id);
@@ -272,7 +273,7 @@ namespace IdleDefense.UI
                 {
                     // ★ '왜 못 쓰는가'를 반드시 말해준다.
                     //   조건을 안 보여주면 유저는 버그로 받아들인다.
-                    c.Sub.text = TalismanCatalog.UnlockHint(c.Id, tier, best);
+                    c.Sub.text = TalismanCatalog.UnlockHint(c.Id, tier, best, plays);
                     c.Sub.color = UiTheme.TextLocked;
                 }
                 else

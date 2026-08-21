@@ -327,7 +327,19 @@ namespace IdleDefense.Economy
         //
         // 근거: docs/부적2군_설계와_계측.md
 
-        /// <summary>해금 조건 하나. Tier와 Wave 중 하나만 쓴다.</summary>
+        /// <summary>
+        /// 해금 조건 하나. 축이 셋이고 **셋은 OR다** — 하나만 채워도 열린다.
+        ///
+        /// ★ AND가 아닌 것이 설계다.
+        ///   AND로 묶으면 축이 늘어날수록 문이 좁아지고, 그때 축은 선택지가 아니라
+        ///   숙제 목록이 된다. OR면 "안 되는 길이 있으면 다른 길로"가 되고,
+        ///   그게 우리가 놀이 횟수 축을 넣는 유일한 이유다 —
+        ///   **티어에서 막힌 사람에게 다른 문을 하나 열어주는 것.**
+        ///
+        /// ★ 놀이 횟수는 벽 판정에 안 들어간다.
+        ///   해금은 '무엇을 쓸 수 있는가'이고 도달점은 부적이 못 바꾼다(56조합 전수 실측).
+        ///   그래서 이 축이 늘어도 90일 곡선은 그대로다.
+        /// </summary>
         public struct Unlock
         {
             public readonly string Id;
@@ -335,8 +347,13 @@ namespace IdleDefense.Economy
             public readonly int Tier;
             /// <summary>최고 기록이 이 웨이브 이상이면 해금. 0이면 웨이브 조건 없음.</summary>
             public readonly int Wave;
+            /// <summary>도깨비와 논 판 수가 이만큼이면 해금. 0이면 조건 없음.</summary>
+            public readonly int Plays;
 
-            public Unlock(string id, int tier, int wave) { Id = id; Tier = tier; Wave = wave; }
+            public Unlock(string id, int tier, int wave, int plays = 0)
+            {
+                Id = id; Tier = tier; Wave = wave; Plays = plays;
+            }
         }
 
         /// <summary>
@@ -357,43 +374,65 @@ namespace IdleDefense.Economy
             new Unlock(Kkachi,      3, 0),    // 쿨감
             new Unlock(Imugi,       4, 0),    // 만숙   — 기여도 1위(+5.85%)라 가장 늦게
             new Unlock(Bulgasari,   5, 0),    // 희생   — 다른 부적이 있어야 값이 난다
-            new Unlock(Dokkaebi,    5, 0),    // 변덕   — 운
+            // ★ 도깨비만 문이 둘이다 — 티어 5 승천 **또는** 윷 30판.
+            //   윷을 놀아주는 상대가 도깨비이므로 서사가 그대로 규칙이 된다.
+            //   그리고 이 부적의 축이 '변덕'이라, 놀이로 얻는 것이 뜻에도 맞는다.
+            //   30판은 하루 두 판 기준 보름이다 — 미니게임을 실제로 좋아한 사람만 닿는다.
+            new Unlock(Dokkaebi,    5, 0, 30), // 변덕   — 운
         };
 
-        /// <summary>해금됐는가. 1군 8종은 항상 true다.</summary>
-        public static bool IsUnlocked(string id, int tier, int bestWave)
+        /// <summary>
+        /// 해금됐는가. 1군 8종은 항상 true다.
+        ///
+        /// plays 기본값이 0인 것은 기존 호출부를 그대로 두기 위해서다 —
+        /// 놀이 축이 없는 부적에는 아무 영향이 없다.
+        /// </summary>
+        public static bool IsUnlocked(string id, int tier, int bestWave, int plays = 0)
         {
             for (int i = 0; i < Unlocks.Length; i++)
             {
                 if (Unlocks[i].Id != id) continue;
-                if (Unlocks[i].Tier > 0) return tier >= Unlocks[i].Tier;
-                return bestWave >= Unlocks[i].Wave;
+                var u = Unlocks[i];
+                if (u.Tier  > 0 && tier     >= u.Tier)  return true;
+                if (u.Wave  > 0 && bestWave >= u.Wave)  return true;
+                if (u.Plays > 0 && plays    >= u.Plays) return true;
+                return false;
             }
             return Exists(id);   // 조건 목록에 없으면 1군이거나 미지의 id
         }
 
         /// <summary>지금 쓸 수 있는 부적 전부. 표시 순서를 따른다.</summary>
-        public static List<string> UnlockedIds(int tier, int bestWave)
+        public static List<string> UnlockedIds(int tier, int bestWave, int plays = 0)
         {
             var list = new List<string>(DisplayOrder.Length);
             for (int i = 0; i < DisplayOrder.Length; i++)
-                if (IsUnlocked(DisplayOrder[i], tier, bestWave)) list.Add(DisplayOrder[i]);
+                if (IsUnlocked(DisplayOrder[i], tier, bestWave, plays)) list.Add(DisplayOrder[i]);
             return list;
         }
 
         /// <summary>UI에 보여줄 해금 조건 문구. 이미 해금됐으면 빈 문자열.</summary>
-        public static string UnlockHint(string id, int tier, int bestWave)
+        public static string UnlockHint(string id, int tier, int bestWave, int plays = 0)
         {
-            if (IsUnlocked(id, tier, bestWave)) return string.Empty;
+            if (IsUnlocked(id, tier, bestWave, plays)) return string.Empty;
             for (int i = 0; i < Unlocks.Length; i++)
             {
                 if (Unlocks[i].Id != id) continue;
-                return Unlocks[i].Tier > 0
-                    ? $"티어 {Unlocks[i].Tier} 승천"
-                    : $"웨이브 {Unlocks[i].Wave} 도달";
+                var u = Unlocks[i];
+
+                // ★ 열려 있는 문을 **전부** 보여준다.
+                //   하나만 보여주면 유저는 그 길이 막혔을 때 포기한다.
+                //   매 프레임 도는 경로가 아니라(잠긴 카드에만, 화면을 열 때만) 문자열 조립을 해도 된다.
+                string s2 = string.Empty;
+                if (u.Tier  > 0) s2 = Join(s2, $"티어 {u.Tier} 승천");
+                if (u.Wave  > 0) s2 = Join(s2, $"웨이브 {u.Wave} 도달");
+                if (u.Plays > 0) s2 = Join(s2, $"놀이 {u.Plays}판");
+                return s2;
             }
             return string.Empty;
         }
+
+        private static string Join(string acc, string part)
+            => acc.Length == 0 ? part : acc + " 또는 " + part;
 
         /// <summary>전체 17종. 장착·조회는 이걸 본다.</summary>
         public static IReadOnlyList<TalismanSystem.Talisman> All => all;

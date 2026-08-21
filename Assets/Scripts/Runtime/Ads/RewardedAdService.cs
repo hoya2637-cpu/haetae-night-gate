@@ -10,6 +10,16 @@ namespace IdleDefense.Ads
         DokkaebiSummon,  // 도깨비방망이 재소환 (코인 2배 10초)
         SpeedBoost,      // 전투 배속
         Revive,          // 부활
+
+        /// <summary>
+        /// 윷 보상판 한 판 더. 하루 두 판 중 **두 번째**만 여기 붙는다.
+        ///
+        /// ★ DokkaebiSummon에 얹지 않은 이유 —
+        ///   광고 유닛 ID는 자리마다 따로 발급하고, 계측도 자리마다 따로 본다.
+        ///   둘을 한 이름으로 묶으면 "도깨비 광고 시청률"이 두 자리의 평균이 되어
+        ///   어느 쪽이 도는지 영영 모르게 된다. 자리가 다르면 이름도 달라야 한다.
+        /// </summary>
+        YutExtraPlay,
     }
 
     /// <summary>
