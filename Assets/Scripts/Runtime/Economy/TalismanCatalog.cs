@@ -304,6 +304,97 @@ namespace IdleDefense.Economy
             },
         };
 
+        // ─────────────────────────────────────────
+        // 해금
+        //
+        // ★ 해금 상태를 세이브에 저장하지 않는다.
+        //   tier와 bestWave에서 매번 계산한다.
+        //     · 조작 대상이 하나 줄고 (SaveTamper 방어면이 넓어지지 않는다)
+        //     · 세이브 마이그레이션이 필요 없고
+        //     · bestWave는 단조증가라 해금이 되돌아갈 일이 없다
+        //
+        // ★ 계측 근거 — 2군을 언제 풀든 평균 커브는 거의 안 움직인다.
+        //     1군 8종만  최선 6.80 / 중앙 8.50 / 최악 10.58분
+        //     17종 전체  최선 5.07 / 중앙 8.09 / 최악 11.66분
+        //   중앙값 기준 4.9% 단축뿐이다. 압축은 '잘 고르는 유저'에게만 일어나며
+        //   그건 커브 붕괴가 아니라 숙련의 보상이다.
+        //   그래서 해금 시점은 커브가 아니라 '진행감' 기준으로 잡았다.
+        //
+        // ★ 다만 한꺼번에 9종을 쏟으면 안 된다.
+        //   최악 조합이 10.58 -> 11.66분으로 나빠졌다 —
+        //   선택지가 늘면 나쁜 선택지도 같이 는다.
+        //   조금씩 푸는 이유는 취향이 아니라 측정이다.
+        //
+        // 근거: docs/부적2군_설계와_계측.md
+
+        /// <summary>해금 조건 하나. Tier와 Wave 중 하나만 쓴다.</summary>
+        public struct Unlock
+        {
+            public readonly string Id;
+            /// <summary>이 티어 이상이면 해금. 0이면 티어 조건 없음.</summary>
+            public readonly int Tier;
+            /// <summary>최고 기록이 이 웨이브 이상이면 해금. 0이면 웨이브 조건 없음.</summary>
+            public readonly int Wave;
+
+            public Unlock(string id, int tier, int wave) { Id = id; Tier = tier; Wave = wave; }
+        }
+
+        /// <summary>
+        /// 2군 9종의 해금 조건. 1군 8종은 조건이 없다(고정 지급).
+        ///
+        /// 순서는 '새 축을 하나씩 배우는' 순서이며, 강한 것일수록 늦게 온다.
+        /// 웨이브 조건은 런 안에서 즉시 일어나고, 티어 조건은 큰 이정표다.
+        /// 두 종류의 진행감이 겹치게 했다.
+        /// </summary>
+        public static readonly Unlock[] Unlocks =
+        {
+            new Unlock(Ganggamchan, 0, 20),   // 피해   — 이미 아는 축. "더 있구나"를 일찍 알린다
+            new Unlock(Jangseung,   0, 45),   // 자동   — 안 눌러도 된다는 것을 일찍 배운다
+            new Unlock(Gumiho,      0, 70),   // 누적   — 반복의 보상
+
+            new Unlock(Eoduksini,   2, 0),    // 조건부 — 타이밍 학습
+            new Unlock(Sansin,      3, 0),    // 증폭
+            new Unlock(Kkachi,      3, 0),    // 쿨감
+            new Unlock(Imugi,       4, 0),    // 만숙   — 기여도 1위(+5.85%)라 가장 늦게
+            new Unlock(Bulgasari,   5, 0),    // 희생   — 다른 부적이 있어야 값이 난다
+            new Unlock(Dokkaebi,    5, 0),    // 변덕   — 운
+        };
+
+        /// <summary>해금됐는가. 1군 8종은 항상 true다.</summary>
+        public static bool IsUnlocked(string id, int tier, int bestWave)
+        {
+            for (int i = 0; i < Unlocks.Length; i++)
+            {
+                if (Unlocks[i].Id != id) continue;
+                if (Unlocks[i].Tier > 0) return tier >= Unlocks[i].Tier;
+                return bestWave >= Unlocks[i].Wave;
+            }
+            return Exists(id);   // 조건 목록에 없으면 1군이거나 미지의 id
+        }
+
+        /// <summary>지금 쓸 수 있는 부적 전부. 표시 순서를 따른다.</summary>
+        public static List<string> UnlockedIds(int tier, int bestWave)
+        {
+            var list = new List<string>(DisplayOrder.Length);
+            for (int i = 0; i < DisplayOrder.Length; i++)
+                if (IsUnlocked(DisplayOrder[i], tier, bestWave)) list.Add(DisplayOrder[i]);
+            return list;
+        }
+
+        /// <summary>UI에 보여줄 해금 조건 문구. 이미 해금됐으면 빈 문자열.</summary>
+        public static string UnlockHint(string id, int tier, int bestWave)
+        {
+            if (IsUnlocked(id, tier, bestWave)) return string.Empty;
+            for (int i = 0; i < Unlocks.Length; i++)
+            {
+                if (Unlocks[i].Id != id) continue;
+                return Unlocks[i].Tier > 0
+                    ? $"티어 {Unlocks[i].Tier} 승천"
+                    : $"웨이브 {Unlocks[i].Wave} 도달";
+            }
+            return string.Empty;
+        }
+
         /// <summary>전체 17종. 장착·조회는 이걸 본다.</summary>
         public static IReadOnlyList<TalismanSystem.Talisman> All => all;
 

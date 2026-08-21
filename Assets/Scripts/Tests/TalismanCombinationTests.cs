@@ -66,13 +66,19 @@ namespace IdleDefense.Tests
         /// 한 런을 벽까지 돌린다. GameController와 같은 배선을 쓴다.
         /// (부적 Tick → TalismanMultiplier → ExecuteFraction → Battle.Tick)
         /// </summary>
-        private RunResult RunOnce(int[] combo, Policy policy, double dt, double atkMul = 1.0)
+        private RunResult RunOnce(int[] combo, Policy policy, double dt,
+                                 double atkMul = 1.0, string[] ids = null)
         {
             var runner = new BattleRunner(cfg);
             var tracks = new UpgradeTracks(cfg);
             var tal = new TalismanSystem(cfg);
 
-            if (combo != null)
+            // ids가 오면 그쪽이 우선이다. 2군을 포함한 17종 표본은 인덱스가 아니라 id로 온다 —
+            // AllCombinations는 1군 전용이라 2군 조합을 표현할 수 없다.
+            if (ids != null)
+                foreach (var id in ids)
+                    tal.Equip(TalismanCatalog.Get(id));
+            else if (combo != null)
                 foreach (int idx in combo)
                     tal.Equip(TalismanCatalog.FirstGroup[idx]);
 
@@ -126,15 +132,19 @@ namespace IdleDefense.Tests
 
             // Informed — 원시/즉발을 먼저 깔고, 메타는 깔린 효과가 있을 때만 쓴다.
             // 배치도 성격에 맞춘다: 지속형은 뒤(오래), 즉발은 앞(지금).
+            // ★ 1차 — '스스로 피해를 내는' 축을 전부 먼저 깐다.
+            //   2군의 누적·만숙·조건부·자동·변덕은 결국 피해를 내므로 여기 속한다.
+            //   이걸 2차 루프로 미루면 복제(전우치)가 복제할 대상과
+            //   연장(무당)이 늘릴 대상이 달라져 같은 조합도 다른 결과가 나온다.
+            //   파이썬 복제 모델(sim/tal2.py)의 DMGLIKE와 같은 목록이어야 한다.
             for (int i = 0; i < eq.Count; i++)
             {
                 if (!eq[i].IsReady) continue;
-                var kind = eq[i].Effect;
-                if (kind == TalismanEffect.Damage)
+                if (IsDamageLike(eq[i].Effect))
                 {
                     if (tal.Summon(i, TalismanSystem.Lane.Back)) summons++;
                 }
-                else if (kind == TalismanEffect.Execute)
+                else if (eq[i].Effect == TalismanEffect.Execute)
                 {
                     if (tal.Summon(i, TalismanSystem.Lane.Front)) summons++;
                 }
@@ -161,11 +171,23 @@ namespace IdleDefense.Tests
             for (int i = 0; i < eq.Count; i++)
             {
                 if (!eq[i].IsReady) continue;
-                var kind = eq[i].Effect;
-                if (kind == TalismanEffect.Damage || kind == TalismanEffect.Execute) continue;
+                if (IsDamageLike(eq[i].Effect)) continue;
+                if (eq[i].Effect == TalismanEffect.Execute) continue;
                 if (tal.Summon(i, TalismanSystem.Lane.Back)) summons++;
             }
         }
+
+        /// <summary>
+        /// '스스로 피해를 내는' 축인가. 파이썬 복제 모델의 DMGLIKE와 같아야 한다.
+        /// 희생(Feed)은 남의 쿨에 기대므로 여기 없다 — 메타 쪽이다.
+        /// </summary>
+        private static bool IsDamageLike(TalismanEffect e)
+            => e == TalismanEffect.Damage
+            || e == TalismanEffect.Stack
+            || e == TalismanEffect.Mature
+            || e == TalismanEffect.Conditional
+            || e == TalismanEffect.Auto
+            || e == TalismanEffect.Random;
 
         // ─────────────────────────────────────────
         // 1. 구조적 계약 — 측정 없이도 참이어야 하는 것
@@ -501,6 +523,295 @@ namespace IdleDefense.Tests
                 "먹을 대상이 없는데 소환이 성공했습니다.");
             Assert.AreEqual(0.0, tal.Equipped[0].CooldownRemaining, 1e-9,
                 "실패했는데 쿨타임을 썼습니다.");
+        }
+
+        // ─────────────────────────────────────────
+        // 2.6 17종 표본 회귀 — 파이썬 전수 결과를 Unity로 가져온다
+        //
+        // 1군 56조합은 복제모델_예측과_일치한다가 전수로 지킨다.
+        // 2군을 포함한 17종은 C(17,5) = 6,188이라 Unity에서 전수가 불가능하므로
+        // 파이썬이 찾은 극단(최선 5 / 최악 5)과 고정시드 표본 30만 회귀 감시한다.
+        //
+        // ★ 도깨비는 제외한다.
+        //   C#의 System.Random과 파이썬 random.Random은 난수 시퀀스가 달라
+        //   시드를 맞춰도 같은 롤이 나오지 않는다.
+        //   도깨비는 아래 별도 테스트에서 '범위 안'으로만 검사한다.
+        //
+        // 근거: docs/2군_검증전략.md 5장
+
+        /// <summary>표본 한 줄. 이름이 짧은 이유는 40행 표를 읽을 수 있게 하기 위해서다.</summary>
+        private struct S
+        {
+            public readonly double Minutes;
+            public readonly string[] Ids;
+            public S(double minutes, params string[] ids) { Minutes = minutes; Ids = ids; }
+        }
+
+        /// <summary>id 상수 별칭. 표를 읽을 수 있는 폭으로 유지하기 위한 것.</summary>
+        private static class C
+        {
+            public const string Pojol = TalismanCatalog.Pojol;
+            public const string Janggun = TalismanCatalog.Janggun;
+            public const string Hongildong = TalismanCatalog.Hongildong;
+            public const string Jeoseungsaja = TalismanCatalog.Jeoseungsaja;
+            public const string Amhaengeosa = TalismanCatalog.Amhaengeosa;
+            public const string Jeonuchi = TalismanCatalog.Jeonuchi;
+            public const string Cheoyong = TalismanCatalog.Cheoyong;
+            public const string Mudang = TalismanCatalog.Mudang;
+            public const string Ganggamchan = TalismanCatalog.Ganggamchan;
+            public const string Eoduksini = TalismanCatalog.Eoduksini;
+            public const string Jangseung = TalismanCatalog.Jangseung;
+            public const string Gumiho = TalismanCatalog.Gumiho;
+            public const string Imugi = TalismanCatalog.Imugi;
+            public const string Sansin = TalismanCatalog.Sansin;
+            public const string Kkachi = TalismanCatalog.Kkachi;
+            public const string Bulgasari = TalismanCatalog.Bulgasari;
+        }
+
+        /// <summary>파이썬 sim/tal2.py, Informed 정책, dt = 0.02 실측값(분).</summary>
+        private static readonly S[] Samples =
+        {
+            new S(4.690, C.Janggun, C.Hongildong, C.Jeonuchi, C.Ganggamchan, C.Sansin),   // 최선 장군·홍길동·전우치·강감찬·산신
+            new S(5.189, C.Janggun, C.Hongildong, C.Jeonuchi, C.Ganggamchan, C.Kkachi),   // 최선 장군·홍길동·전우치·강감찬·까치호랑이
+            new S(5.251, C.Janggun, C.Jeonuchi, C.Ganggamchan, C.Sansin, C.Kkachi),   // 최선 장군·전우치·강감찬·산신·까치호랑이
+            new S(5.338, C.Janggun, C.Hongildong, C.Ganggamchan, C.Sansin, C.Kkachi),   // 최선 장군·홍길동·강감찬·산신·까치호랑이
+            new S(5.581, C.Pojol, C.Hongildong, C.Ganggamchan, C.Jangseung, C.Sansin),   // 최선 포졸·홍길동·강감찬·장승·산신
+            new S(10.880, C.Amhaengeosa, C.Jeonuchi, C.Mudang, C.Sansin, C.Kkachi),   // 최악 암행어사·전우치·무당·산신·까치호랑이
+            new S(10.902, C.Amhaengeosa, C.Mudang, C.Sansin, C.Kkachi, C.Bulgasari),   // 최악 암행어사·무당·산신·까치호랑이·불가사리
+            new S(10.957, C.Amhaengeosa, C.Jeonuchi, C.Mudang, C.Sansin, C.Bulgasari),   // 최악 암행어사·전우치·무당·산신·불가사리
+            new S(10.900, C.Pojol, C.Amhaengeosa, C.Jeonuchi, C.Mudang, C.Sansin),   // 최악 포졸·암행어사·전우치·무당·산신
+            new S(11.606, C.Amhaengeosa, C.Jeonuchi, C.Cheoyong, C.Mudang, C.Sansin),   // 최악 암행어사·전우치·처용·무당·산신
+            new S(8.430, C.Jeonuchi, C.Jangseung, C.Gumiho, C.Sansin, C.Bulgasari),   // 표본 전우치·장승·구미호·산신·불가사리
+            new S(6.438, C.Janggun, C.Jeonuchi, C.Cheoyong, C.Ganggamchan, C.Jangseung),   // 표본 장군·전우치·처용·강감찬·장승
+            new S(7.633, C.Jeoseungsaja, C.Ganggamchan, C.Jangseung, C.Sansin, C.Kkachi),   // 표본 저승사자·강감찬·장승·산신·까치호랑이
+            new S(7.100, C.Jeoseungsaja, C.Ganggamchan, C.Gumiho, C.Imugi, C.Bulgasari),   // 표본 저승사자·강감찬·구미호·이무기·불가사리
+            new S(7.795, C.Amhaengeosa, C.Cheoyong, C.Gumiho, C.Imugi, C.Sansin),   // 표본 암행어사·처용·구미호·이무기·산신
+            new S(9.758, C.Jeoseungsaja, C.Amhaengeosa, C.Mudang, C.Jangseung, C.Sansin),   // 표본 저승사자·암행어사·무당·장승·산신
+            new S(7.314, C.Ganggamchan, C.Jangseung, C.Gumiho, C.Sansin, C.Kkachi),   // 표본 강감찬·장승·구미호·산신·까치호랑이
+            new S(8.447, C.Pojol, C.Hongildong, C.Mudang, C.Sansin, C.Kkachi),   // 표본 포졸·홍길동·무당·산신·까치호랑이
+            new S(7.311, C.Jeoseungsaja, C.Cheoyong, C.Ganggamchan, C.Eoduksini, C.Kkachi),   // 표본 저승사자·처용·강감찬·어둑시니·까치호랑이
+            new S(7.350, C.Janggun, C.Hongildong, C.Mudang, C.Imugi, C.Sansin),   // 표본 장군·홍길동·무당·이무기·산신
+            new S(8.139, C.Jeoseungsaja, C.Amhaengeosa, C.Ganggamchan, C.Jangseung, C.Gumiho),   // 표본 저승사자·암행어사·강감찬·장승·구미호
+            new S(7.468, C.Hongildong, C.Amhaengeosa, C.Jangseung, C.Imugi, C.Bulgasari),   // 표본 홍길동·암행어사·장승·이무기·불가사리
+            new S(7.495, C.Jeonuchi, C.Cheoyong, C.Ganggamchan, C.Eoduksini, C.Kkachi),   // 표본 전우치·처용·강감찬·어둑시니·까치호랑이
+            new S(8.170, C.Jeoseungsaja, C.Jeonuchi, C.Jangseung, C.Imugi, C.Sansin),   // 표본 저승사자·전우치·장승·이무기·산신
+            new S(7.391, C.Pojol, C.Hongildong, C.Mudang, C.Ganggamchan, C.Jangseung),   // 표본 포졸·홍길동·무당·강감찬·장승
+            new S(7.081, C.Cheoyong, C.Jangseung, C.Imugi, C.Kkachi, C.Bulgasari),   // 표본 처용·장승·이무기·까치호랑이·불가사리
+            new S(7.189, C.Hongildong, C.Amhaengeosa, C.Ganggamchan, C.Eoduksini, C.Sansin),   // 표본 홍길동·암행어사·강감찬·어둑시니·산신
+            new S(8.931, C.Mudang, C.Eoduksini, C.Gumiho, C.Sansin, C.Kkachi),   // 표본 무당·어둑시니·구미호·산신·까치호랑이
+            new S(7.549, C.Jeoseungsaja, C.Jeonuchi, C.Ganggamchan, C.Eoduksini, C.Imugi),   // 표본 저승사자·전우치·강감찬·어둑시니·이무기
+            new S(7.185, C.Jeoseungsaja, C.Eoduksini, C.Jangseung, C.Gumiho, C.Imugi),   // 표본 저승사자·어둑시니·장승·구미호·이무기
+            new S(7.652, C.Jeoseungsaja, C.Cheoyong, C.Ganggamchan, C.Eoduksini, C.Bulgasari),   // 표본 저승사자·처용·강감찬·어둑시니·불가사리
+            new S(8.759, C.Pojol, C.Hongildong, C.Jeoseungsaja, C.Amhaengeosa, C.Eoduksini),   // 표본 포졸·홍길동·저승사자·암행어사·어둑시니
+            new S(7.230, C.Hongildong, C.Jeoseungsaja, C.Eoduksini, C.Gumiho, C.Imugi),   // 표본 홍길동·저승사자·어둑시니·구미호·이무기
+            new S(8.778, C.Mudang, C.Jangseung, C.Gumiho, C.Sansin, C.Kkachi),   // 표본 무당·장승·구미호·산신·까치호랑이
+            new S(7.433, C.Jeoseungsaja, C.Ganggamchan, C.Eoduksini, C.Gumiho, C.Bulgasari),   // 표본 저승사자·강감찬·어둑시니·구미호·불가사리
+            new S(8.334, C.Hongildong, C.Jeoseungsaja, C.Ganggamchan, C.Sansin, C.Bulgasari),   // 표본 홍길동·저승사자·강감찬·산신·불가사리
+            new S(7.110, C.Janggun, C.Jangseung, C.Imugi, C.Sansin, C.Kkachi),   // 표본 장군·장승·이무기·산신·까치호랑이
+            new S(7.562, C.Pojol, C.Hongildong, C.Amhaengeosa, C.Cheoyong, C.Ganggamchan),   // 표본 포졸·홍길동·암행어사·처용·강감찬
+            new S(8.699, C.Pojol, C.Hongildong, C.Mudang, C.Kkachi, C.Bulgasari),   // 표본 포졸·홍길동·무당·까치호랑이·불가사리
+            new S(8.138, C.Hongildong, C.Jeoseungsaja, C.Amhaengeosa, C.Jangseung, C.Imugi),   // 표본 홍길동·저승사자·암행어사·장승·이무기
+        };
+
+        [Test]
+        public void 복제모델_17종_표본과_일치한다()
+        {
+            const double Tolerance = 0.15;   // 분
+
+            var failures = new System.Text.StringBuilder();
+            int checkedCount = 0;
+
+            foreach (var sample in Samples)
+            {
+                var r = RunOnce(null, Policy.Informed, TimeDt, 1.0, sample.Ids);
+                checkedCount++;
+
+                if (r.DeepestWave != 77)
+                {
+                    failures.AppendLine(
+                        $"  [{string.Join("·", sample.Ids)}] 도달 웨이브 {r.DeepestWave} (기대 77)");
+                    continue;
+                }
+
+                double minutes = r.Seconds / 60.0;
+                double diff = System.Math.Abs(minutes - sample.Minutes);
+                if (diff > Tolerance)
+                    failures.AppendLine(
+                        $"  [{string.Join("·", sample.Ids)}] " +
+                        $"파이썬 {sample.Minutes:F3}분 vs 실기 {minutes:F3}분 (차 {diff:F3})");
+            }
+
+            Assert.AreEqual(40, checkedCount, "표본 수가 바뀌었습니다.");
+            Assert.IsEmpty(failures.ToString(),
+                "파이썬 복제 모델과 실제 BattleRunner가 17종에서 어긋났습니다.\n" +
+                "★ 부적 수치를 조정하지 마십시오. 두 모델의 가정 차이를 먼저 찾아야 합니다.\n" +
+                "  15,504조합 전수 결과 전체가 이 정합 위에 얹혀 있습니다.\n" +
+                "  가장 흔한 원인은 소환 정책(순서·레인)의 불일치입니다.\n\n" +
+                failures);
+        }
+
+        [Test]
+        public void 도깨비는_시드가_달라도_범위_안에_머문다()
+        {
+            // 변덕은 결정론이 아니라 값을 못 박을 수 없다. 대신 두 가지를 단언한다.
+            //   1) 어떤 롤이 나와도 도달 웨이브는 77이다  ← 벽 보증
+            //   2) 런 시간이 파이썬 24시드 실측 범위 안에 있다
+            //
+            // 파이썬 24시드 (장군·홍길동·강감찬·어둑시니·도깨비, dt=0.02):
+            //   최소 6.281 / 평균 6.685 / 최대 7.120분  — 폭 0.839분(12.6%)
+            var ids = new[] { C.Janggun, C.Hongildong, C.Ganggamchan, C.Eoduksini,
+                              TalismanCatalog.Dokkaebi };
+
+            const double Low = 6.281 - 0.60;   // 난수 구현 차이만큼 여유를 둔다
+            const double High = 7.120 + 0.60;
+
+            var failures = new System.Text.StringBuilder();
+            for (int seed = 0; seed < 6; seed++)
+            {
+                var r = RunOnceSeeded(ids, seed);
+                double minutes = r.Seconds / 60.0;
+
+                if (r.DeepestWave != 77)
+                    failures.AppendLine($"  시드 {seed}: 도달 웨이브 {r.DeepestWave} — 변덕이 벽을 건드렸습니다.");
+                else if (minutes < Low || minutes > High)
+                    failures.AppendLine($"  시드 {seed}: {minutes:F3}분 (범위 {Low:F2}~{High:F2})");
+            }
+
+            Assert.IsEmpty(failures.ToString(),
+                "도깨비의 변덕이 예상 범위를 벗어났습니다.\n" +
+                "롤 테이블(TalismanSystem.RollTable)이 바뀌었거나 가중치가 어긋났을 수 있습니다.\n\n" +
+                failures);
+        }
+
+        /// <summary>시드를 고정해 한 런을 돌린다. 변덕이 낀 조합 전용.</summary>
+        private RunResult RunOnceSeeded(string[] ids, int seed)
+        {
+            var runner = new BattleRunner(cfg);
+            var tracks = new UpgradeTracks(cfg);
+            var tal = new TalismanSystem(cfg);
+            tal.SetRandomSeed(seed);
+
+            foreach (var id in ids) tal.Equip(TalismanCatalog.Get(id));
+
+            runner.BeginRun(1, BigNumber.Zero);
+            runner.AttackMultiplier = tracks.CombatMultiplier;
+            runner.CoinMultiplier = tracks.CoinMultiplier;
+
+            int summons = 0, guard = 0;
+            while (runner.IsRunning && !runner.IsWalled && guard++ < 4_000_000)
+            {
+                while (tracks.BuyBest(runner.Coin, out var cost))
+                {
+                    runner.SpendCoin(cost);
+                    runner.AttackMultiplier = tracks.CombatMultiplier;
+                    runner.CoinMultiplier = tracks.CoinMultiplier;
+                }
+                Summon(tal, Policy.Informed, ref summons);
+                tal.Tick(TimeDt, TimeDt);
+                runner.TalismanMultiplier = tal.DamageMultiplierAt(runner.WaveHpRatio);
+                double execute = tal.ConsumeExecuteFraction();
+                if (execute > 0.0) runner.ExecuteFraction(execute);
+                runner.Tick(TimeDt, tracks.TotalLevel);
+            }
+
+            return new RunResult
+            {
+                DeepestWave = runner.DeepestWave,
+                Seconds = runner.RunElapsed,
+                Summons = summons,
+            };
+        }
+
+        // ─────────────────────────────────────────
+        // 해금
+
+        [Test]
+        public void 일군_팔종은_처음부터_전부_해금돼_있다()
+        {
+            // 고정 지급이 1군의 계약이다. 이게 깨지면 90일 커브 측정의 전제가 무너진다 —
+            // 유저마다 보유 부적이 다르면 측정치를 해석할 수 없다.
+            foreach (var t in TalismanCatalog.FirstGroup)
+                Assert.IsTrue(TalismanCatalog.IsUnlocked(t.Id, tier: 1, bestWave: 0),
+                    $"{t.DisplayName}이 티어 1 / 웨이브 0에서 잠겨 있습니다.");
+        }
+
+        [Test]
+        public void 이군_구종은_처음에_전부_잠겨_있다()
+        {
+            foreach (var t in TalismanCatalog.SecondGroup)
+                Assert.IsFalse(TalismanCatalog.IsUnlocked(t.Id, tier: 1, bestWave: 0),
+                    $"{t.DisplayName}이 시작부터 열려 있습니다. " +
+                    "2군을 한꺼번에 주면 유저가 손해 보는 조합을 고를 수 있습니다 " +
+                    "(최악 조합 10.58 → 11.66분, 실측).");
+        }
+
+        [Test]
+        public void 해금은_되돌아가지_않는다()
+        {
+            // 조건을 만족한 뒤 더 진행해도 잠기지 않아야 한다.
+            // bestWave는 단조증가이고 tier도 내려가지 않으므로 구조적으로 참이어야 한다.
+            foreach (var u in TalismanCatalog.Unlocks)
+            {
+                int tier = u.Tier > 0 ? u.Tier : 1;
+                int wave = u.Wave > 0 ? u.Wave : 0;
+
+                Assert.IsTrue(TalismanCatalog.IsUnlocked(u.Id, tier, wave),
+                    $"{u.Id}: 조건을 정확히 만족했는데 잠겨 있습니다.");
+                Assert.IsTrue(TalismanCatalog.IsUnlocked(u.Id, tier + 3, wave + 500),
+                    $"{u.Id}: 더 진행했는데 다시 잠겼습니다.");
+            }
+        }
+
+        [Test]
+        public void 해금_조건이_티어와_웨이브에_고르게_퍼져있다()
+        {
+            // 한 티어에 몰아주면 그 구간만 보상이 폭발하고 나머지는 비어 보인다.
+            // 그리고 웨이브 조건은 런 안에서 즉시 일어나므로 초반에 있어야 값이 난다.
+            int waveGated = 0, tierGated = 0;
+            foreach (var u in TalismanCatalog.Unlocks)
+            {
+                if (u.Wave > 0) waveGated++;
+                if (u.Tier > 0) tierGated++;
+                Assert.IsFalse(u.Wave > 0 && u.Tier > 0,
+                    $"{u.Id}: 티어와 웨이브 조건이 동시에 걸려 있습니다. 하나만 씁니다.");
+            }
+
+            Assert.AreEqual(9, waveGated + tierGated, "2군 9종 전부에 조건이 있어야 합니다.");
+            Assert.GreaterOrEqual(waveGated, 2, "웨이브 해금이 너무 적습니다 — 초반 진행감이 빕니다.");
+            Assert.GreaterOrEqual(tierGated, 2, "티어 해금이 너무 적습니다 — 큰 이정표가 빕니다.");
+
+            // 웨이브 조건은 티어 1의 벽(약 77) 안에 있어야 한다.
+            // 벽 너머를 요구하면 영원히 못 얻는다.
+            foreach (var u in TalismanCatalog.Unlocks)
+                if (u.Wave > 0)
+                    Assert.Less(u.Wave, 77,
+                        $"{u.Id}: 웨이브 {u.Wave}는 티어 1의 벽(77) 밖입니다. 영원히 못 얻습니다.");
+        }
+
+        [Test]
+        public void 해금_문구가_비어있지_않다()
+        {
+            // UI가 "왜 못 쓰는가"를 말해주지 못하면 유저는 버그로 받아들인다.
+            foreach (var t in TalismanCatalog.SecondGroup)
+            {
+                string hint = TalismanCatalog.UnlockHint(t.Id, tier: 1, bestWave: 0);
+                Assert.IsNotEmpty(hint, $"{t.DisplayName}의 해금 조건 문구가 비었습니다.");
+            }
+
+            // 이미 해금된 것에는 문구가 없어야 한다 — 붙어 있으면 UI가 헷갈린다.
+            Assert.IsEmpty(TalismanCatalog.UnlockHint(TalismanCatalog.Pojol, 1, 0));
+        }
+
+        [Test]
+        public void 해금된_목록이_표시_순서를_따른다()
+        {
+            var unlocked = TalismanCatalog.UnlockedIds(tier: 1, bestWave: 0);
+            Assert.AreEqual(8, unlocked.Count, "시작 시점에는 1군 8종만 쓸 수 있어야 합니다.");
+            Assert.AreEqual(TalismanCatalog.Jeoseungsaja, unlocked[0],
+                "표시 순서 첫 칸이 저승사자가 아닙니다. 스토어 아이콘이 약속한 캐릭터입니다.");
+
+            var all = TalismanCatalog.UnlockedIds(tier: 6, bestWave: 999);
+            Assert.AreEqual(17, all.Count, "끝까지 가면 17종 전부 열려야 합니다.");
         }
 
         [Test]

@@ -29,6 +29,8 @@ namespace IdleDefense.Art
         public const string UnitRoot   = "Art/Unit/";
         public const string CutinRoot  = "Art/Cutin/";
         public const string HaetaeRoot = "Art/Haetae/tier";
+        public const string FieldRoot  = "Art/Field/tier";
+        public const string YutRoot    = "Art/Yut/";
 
         private static readonly Dictionary<string, Sprite> cache =
             new Dictionary<string, Sprite>(32);
@@ -37,6 +39,7 @@ namespace IdleDefense.Art
         private static readonly HashSet<string> warned = new HashSet<string>();
 
         private static Sprite placeholder;
+        private static Sprite softDot;
 
         // ─────────────────────────────────────────
         // 조회
@@ -46,11 +49,46 @@ namespace IdleDefense.Art
         public static Sprite Cutin(string id) => Load(CutinRoot + id);
 
         /// <summary>해치 티어 아트. 범위를 벗어나면 가장 가까운 티어로 붙인다.</summary>
-        public static Sprite HaetaeTier(int tier)
+        public static Sprite HaetaeTier(int tier) => Load(HaetaeRoot + ClampTier(tier));
+
+        /// <summary>
+        /// 전장 배경. 티어마다 같은 골목의 더 늦은 시각이다.
+        ///
+        /// ★ 세 축이 동시에 움직인다 — 문이 자라고(장승→남대문),
+        ///   하늘이 밝아지고(초저녁→동틀녘), **등불이 줄어든다**(9개→0개).
+        ///   마지막 축이 "밤이 길어지고 있다"를 설명 없이 전달한다. 마을이 비어가는 것이다.
+        ///
+        /// 티어 7 이상은 6번 배경을 계속 쓴다 — 다음 밤은 같은 문에서 다시 시작한다.
+        /// </summary>
+        public static Sprite Field(int tier) => Load(FieldRoot + ClampTier(tier));
+
+        private static int ClampTier(int tier)
         {
-            if (tier < 1) tier = 1;
-            if (tier > 6) tier = 6;
-            return Load(HaetaeRoot + tier);
+            if (tier < 1) return 1;
+            if (tier > 6) return 6;
+            return tier;
+        }
+
+        /// <summary>
+        /// 윷가락의 면. `back`(등) · `belly`(배) · `belly_mark`(백도 가락의 배).
+        ///
+        /// ★ 여기만 **없으면 null을 돌려준다.** 플레이스홀더로 때우지 않는다.
+        ///   윷가락은 아트가 없어도 색칠한 사각형으로 충분히 읽히는 층이라,
+        ///   자홍색 네모 넷이 뜨는 쪽이 오히려 화면을 망가뜨린다.
+        ///   호출부가 null을 보고 사각형으로 그리도록 두는 것이 맞다.
+        /// </summary>
+        public static Sprite YutStick(string face) => TryLoad(YutRoot + face);
+
+        /// <summary>
+        /// 없으면 null. 있으면 좋고 없어도 되는 아트에 쓴다.
+        /// null도 캐시한다 — 매 프레임 없는 파일을 찾으러 가지 않게.
+        /// </summary>
+        public static Sprite TryLoad(string path)
+        {
+            if (cache.TryGetValue(path, out var cached)) return cached;
+            var sprite = Resources.Load<Sprite>(path);
+            cache[path] = sprite;
+            return sprite;
         }
 
         /// <summary>
@@ -119,6 +157,53 @@ namespace IdleDefense.Art
                 placeholder.name = "ArtLibrary_Placeholder";
                 placeholder.hideFlags = HideFlags.HideAndDontSave;
                 return placeholder;
+            }
+        }
+
+        /// <summary>
+        /// 가운데가 진하고 가장자리로 사라지는 원.
+        ///
+        /// ★ 파일로 두지 않는 이유는 이게 **아트가 아니라 도구**이기 때문이다.
+        ///   연기·눈빛·투사체·먼지가 전부 이 한 장을 색만 바꿔 쓴다.
+        ///   파일로 만들면 누군가 "연기용 원"과 "눈빛용 원"을 따로 만들기 시작하고,
+        ///   그때부터 같은 것이 네 벌 생긴다.
+        ///
+        /// uGUI의 기본 스프라이트는 네모라 연기가 상자로 보인다. 그것만은 못 쓴다.
+        /// </summary>
+        public static Sprite SoftDot
+        {
+            get
+            {
+                if (softDot != null) return softDot;
+
+                const int size = 64;
+                const float r = size * 0.5f;
+                var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+                {
+                    name = "ArtLibrary_SoftDot",
+                    filterMode = FilterMode.Bilinear,
+                    wrapMode = TextureWrapMode.Clamp,
+                    hideFlags = HideFlags.HideAndDontSave,
+                };
+
+                var px = new Color[size * size];
+                for (int y = 0; y < size; y++)
+                    for (int x = 0; x < size; x++)
+                    {
+                        float dx = (x + 0.5f) - r, dy = (y + 0.5f) - r;
+                        float d = Mathf.Sqrt(dx * dx + dy * dy) / r;      // 0 가운데 ~ 1 가장자리
+                        float a = Mathf.Clamp01(1f - d);
+                        a = a * a * (3f - 2f * a);                        // 부드럽게
+                        px[y * size + x] = new Color(1f, 1f, 1f, a);
+                    }
+                tex.SetPixels(px);
+                tex.Apply();
+
+                softDot = Sprite.Create(
+                    tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size);
+                softDot.name = "ArtLibrary_SoftDot";
+                softDot.hideFlags = HideFlags.HideAndDontSave;
+                return softDot;
             }
         }
 

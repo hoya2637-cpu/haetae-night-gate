@@ -81,3 +81,6 @@ tools/verify/
 
 # Test Runner 내보내기 결과 (로컬 확인용)
 TestResults*.xml
+
+# 계측 리포트 (SimulationTests가 파일로 떨군다. 로컬 확인용)
+Reports/

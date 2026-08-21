@@ -369,6 +369,24 @@ namespace IdleDefense.Economy
         /// 코인 차감. 업그레이드 구매는 이 메서드를 통해서만 한다.
         /// Coin을 외부에서 직접 쓰게 열어두면 어디서 코인이 새는지 추적이 안 된다.
         /// </summary>
+        /// <summary>
+        /// 전투 밖에서 들어오는 엽전. 지금은 도깨비 놀이의 위로상뿐이다.
+        ///
+        /// ★ 이 통로로 밸런스를 밀 수 없다는 것이 실측으로 확인됐다.
+        ///   런 시작 시 웨이브 보상의 43배를 넣어도 런 시간이 4.9%밖에 안 줄었다
+        ///   (SimulationTests 스윕, 2026-08-20). 강화 비용이 지수적이라
+        ///   목돈은 몇 레벨 더 사고 끝나고, 런의 결과는 런 도중 획득이 지배한다.
+        ///
+        /// ★ 다만 '배율'로 주면 이야기가 완전히 달라진다.
+        ///   코인 배율을 올렸더니 최고웨이브가 233 → 235로 밀렸다. 도달점이 움직였다.
+        ///   **일시금은 안전하고 배율은 위험하다.** 이 차이를 잊지 말 것.
+        /// </summary>
+        public void AddCoin(BigNumber amount)
+        {
+            if (amount.IsZero) return;
+            Coin += amount;
+        }
+
         public bool SpendCoin(BigNumber amount)
         {
             if (amount <= BigNumber.Zero) return false;

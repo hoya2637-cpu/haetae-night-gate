@@ -33,6 +33,22 @@ namespace IdleDefense.Save
         [Tooltip("runsToday를 리셋한 날짜 (UTC 기준 일련번호)")]
         public int lastRunDayStamp;
 
+        [Header("도깨비 놀이")]
+        [Tooltip("오늘 보상을 받은 윷 판수. 상한을 넘어도 보상 없이 계속 놀 수 있다")]
+        public int yutPlaysToday;
+
+        /// <summary>
+        /// 누적 놀이 판수. 승패와 무관하다.
+        ///
+        /// 부적 해금 조건의 한 축이 된다 — "티어 5 도달 OR 놀이 30판".
+        /// 이기는 것이 아니라 논 횟수로 세는 이유는 둘이다.
+        ///   1) 전승 — **도깨비는 져도 재물을 준다.**
+        ///   2) 설계 — 미니게임을 안 하는 유저가 부적을 영영 못 얻으면 안 된다.
+        ///      OR 조건이라 놀면 빨리 얻고, 안 놀아도 언젠가 얻는다.
+        ///      그게 "조작은 속도를 바꾸되 도달점은 바꾸지 않는다"의 정확한 확장이다.
+        /// </summary>
+        public int totalPlays;
+
         [Header("오프라인")]
         public long lastSeenUnixSeconds;
         public int lastRunWave = 1;
@@ -121,6 +137,7 @@ namespace IdleDefense.Save
             {
                 lastRunDayStamp = today;
                 runsToday = 1;
+                yutPlaysToday = 0;
             }
         }
 
@@ -176,6 +193,8 @@ namespace IdleDefense.Save
             runIndex = Clamp(runIndex, 0, MaxRunIndex);
             gems = Clamp(gems, 0, MaxGems);
             runsToday = Clamp(runsToday, 1, 100000);
+            yutPlaysToday = Clamp(yutPlaysToday, 0, 1000);
+            totalPlays = Clamp(totalPlays, 0, 100000000);
 
             if (double.IsNaN(cores) || double.IsInfinity(cores) || cores < 0) cores = 0;
 

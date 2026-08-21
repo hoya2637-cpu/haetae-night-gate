@@ -352,6 +352,10 @@ namespace IdleDefense.Game
             Talismans.ClearActive();
             Battle.TalismanMultiplier = 1.0;
 
+            // 윷 보상은 '이번 런' 한정이다. 런이 새로 시작되면 사라진다.
+            // 영구로 두면 도달점을 미는 축이 되어 90일 곡선이 무너진다.
+            yutRunMultiplier = 1.0;
+
             Battle.BeginRun(startWave, startCoin);
             State.currentWave = startWave;
 
@@ -437,6 +441,139 @@ namespace IdleDefense.Game
             => EconomyCore.AscendProgress(config, State.tier, Battle.DeepestWave, State.cores);
 
         // ─────────────────────────────────────────
+        // 도깨비 놀이 — 윷
+
+        /// <summary>
+        /// 하루에 보상을 받는 판수. 기본 1 + 광고 1.
+        ///
+        /// ★ 상한을 넘어도 놀 수는 있다. 보상만 없다.
+        ///   미니게임이 재밌으면 사람들은 보상을 최적화하려 든다.
+        ///   상한을 채우려고 하루 20판을 던지면 그건 재미가 아니라 노동이고,
+        ///   데일리 숙제가 된 미니게임은 그만두게 된다.
+        ///   **도깨비는 재물을 주려고 노는 게 아니라 놀고 싶어서 논다.**
+        ///
+        ///   부수 효과 — 보상이 끊긴 뒤에도 던지는 비율이
+        ///   이 미니게임이 실제로 재미있는지를 말해주는 유일한 지표가 된다.
+        /// </summary>
+        public const int YutRewardedPlaysPerDay = 2;
+
+        /// <summary>위로상 엽전 = 현재 웨이브 보상의 이 배수.</summary>
+        private const double YutConsolationWaves = 2.0;
+
+        private YutGame yut;
+        private readonly List<YutResult> yutThrows = new List<YutResult>(4);
+        private readonly List<YutCall> yutCalls = new List<YutCall>(4);
+        private bool yutRewardedThisPlay;
+
+        /// <summary>이번 런에 걸린 윷 배수. 런이 바뀌면 1.0으로 돌아간다.</summary>
+        private double yutRunMultiplier = 1.0;
+        public double YutRunMultiplier => yutRunMultiplier;
+
+        public bool YutInProgress { get; private set; }
+        public int YutRewardedPlaysLeft
+            => Math.Max(0, YutRewardedPlaysPerDay - (State?.yutPlaysToday ?? 0));
+
+        public struct YutSummary
+        {
+            public IList<YutResult> Throws;
+            public IList<YutCall> Calls;
+            /// <summary>이 판이 만든 배수. 1.0이면 아무 일도 없었다.</summary>
+            public double Multiplier;
+            /// <summary>보상 상한 안이었는가. false면 순수하게 논 것이다.</summary>
+            public bool Rewarded;
+            public BigNumber Consolation;
+        }
+
+        public YutSummary LastYut { get; private set; }
+
+        /// <summary>한 번 굴릴 때마다. bool은 '한 번 더'인가.</summary>
+        public event Action<YutResult, bool> OnYutThrown;
+        public event Action<YutSummary> OnYutFinished;
+
+        /// <summary>
+        /// 판을 시작한다. 상한을 넘었으면 보상 없이 시작된다 — 거절하지 않는다.
+        /// </summary>
+        public void BeginYut()
+        {
+            if (YutInProgress) return;
+            if (yut == null) yut = new YutGame();
+
+            yutThrows.Clear();
+            yutCalls.Clear();
+            yutRewardedThisPlay = YutRewardedPlaysLeft > 0;
+            YutInProgress = true;
+        }
+
+        /// <summary>
+        /// 한 번 던진다. 윷·모면 판이 계속되고, 아니면 여기서 정산한다.
+        /// 부르기는 던지기마다 고를 수 있다 — 연쇄가 나면 다시 부를 기회가 생긴다.
+        ///
+        /// ★ 난수는 컨트롤러가 소유한다. 화면이 굴리면 결과를 만들어낼 수 있다.
+        /// </summary>
+        public YutResult ThrowYut(YutCall call = YutCall.None)
+        {
+            if (!YutInProgress) BeginYut();
+
+            var r = yut.Throw();
+            yutThrows.Add(r);
+            yutCalls.Add(call);
+
+            bool again = YutGame.ThrowsAgain(r) && yutThrows.Count < YutGame.MaxChain;
+            OnYutThrown?.Invoke(r, again);
+
+            if (!again) FinishYut();
+            return r;
+        }
+
+        /// <summary>
+        /// 정산. 보상은 **이번 런의 부적 배수와 위로상 엽전** 둘뿐이다.
+        ///
+        /// ★ 여기에 코어(도깨비불)나 코인 배율을 추가하지 마라.
+        ///   엽전 배율로 실측했을 때 최고웨이브가 233 → 235로 밀렸다 —
+        ///   엽전 → 강화 레벨 → 진짜 DPS → 벽이 밀린다. 도달점이 움직이면 철칙 위반이다.
+        ///   위로상 '소액'이 안전한 이유는 따로 있다: 일시금은 지렛대가 아니라고 실측됐다
+        ///   (웨이브 보상의 43배를 줘도 런 시간 4.9% 단축).
+        /// </summary>
+        private void FinishYut()
+        {
+            YutInProgress = false;
+
+            var outcome = YutScoring.Score(yutThrows, yutCalls);
+            var consolation = BigNumber.Zero;
+
+            if (yutRewardedThisPlay)
+            {
+                yutRunMultiplier *= outcome.TalismanMultiplier;
+
+                if (outcome.ConsolationCount > 0 && Battle != null)
+                    consolation = EconomyCore.WaveCoinReward(config, Battle.CurrentWave)
+                                * CurrentCoinMultiplier()
+                                * (outcome.ConsolationCount * YutConsolationWaves);
+
+                if (!consolation.IsZero) Battle?.AddCoin(consolation);
+                State.yutPlaysToday++;
+            }
+
+            // 누적 판수는 보상 여부와 무관하게 센다 — 해금 조건이 '논 횟수'이기 때문이다.
+            State.totalPlays++;
+
+            LastYut = new YutSummary
+            {
+                Throws = yutThrows.ToArray(),
+                Calls = yutCalls.ToArray(),
+                Multiplier = yutRewardedThisPlay ? outcome.TalismanMultiplier : 1.0,
+                Rewarded = yutRewardedThisPlay,
+                Consolation = consolation,
+            };
+
+            SaveNow();
+            OnYutFinished?.Invoke(LastYut);
+        }
+
+        /// <summary>테스트·재현용. 지정하지 않으면 매번 다르다.</summary>
+        public void SetYutSeed(int seed) => yut = new YutGame(seed);
+
+        // ─────────────────────────────────────────
         // 업그레이드
 
         /// <summary>
@@ -451,9 +588,36 @@ namespace IdleDefense.Game
         /// 카탈로그 원본이 아니라 복제본이 들어가므로(Equip이 Clone한다)
         /// 런타임 쿨타임이 정적 카탈로그를 오염시키지 않는다.
         /// </summary>
+        /// <summary>
+        /// 해금된 것만 남긴다. 잠긴 부적이 섞여 있어도 조용히 버리고 나머지로 진행한다.
+        ///
+        /// 예외를 던지지 않는 이유: 티어가 오르내리거나 세이브가 낡아
+        /// 잠긴 id가 들어오는 것은 정상적인 상황이다.
+        /// 여기서 터지면 그 유저는 게임을 못 켠다.
+        /// </summary>
+        private string[] FilterUnlocked(string[] ids)
+        {
+            if (ids == null || ids.Length == 0) return ids;
+
+            int tier = State != null ? State.tier : 1;
+            int best = State != null ? State.bestWave : 0;
+
+            var kept = new List<string>(ids.Length);
+            for (int i = 0; i < ids.Length; i++)
+                if (TalismanCatalog.IsUnlocked(ids[i], tier, best)) kept.Add(ids[i]);
+
+            return kept.Count == ids.Length ? ids : kept.ToArray();
+        }
+
         public void ApplyLoadout(string[] talismanIds)
         {
             var before = State.equippedTalismans ?? new string[0];
+
+            // ★ 해금 안 된 부적을 걸러낸다. 여기가 유일한 관문이다.
+            //   TalismanSystem은 해금을 모른다 — tier와 bestWave는 상태이지 전투가 아니다.
+            //   세이브를 조작해 2군 id를 넣어도 여기서 떨어진다.
+            //   (bestWave/tier 자체의 조작은 SaveTamper 검증이 따로 막는다)
+            talismanIds = FilterUnlocked(talismanIds);
 
             // 정규화와 쿨타임 보존은 전부 TalismanSystem이 한다.
             // 여기서 UnequipAll + Equip을 직접 조합하면 쿨타임 보존 규칙이
@@ -570,7 +734,11 @@ namespace IdleDefense.Game
             // 조건부 부적(어둑시니)이 웨이브 잔여 체력을 봐야 하므로 비율을 넘긴다.
             // CurrentDamageMultiplier(무인자)를 쓰면 항상 만체력으로 계산돼
             // 어둑시니가 가장 약한 값만 낸다.
-            Battle.TalismanMultiplier = Talismans.DamageMultiplierAt(Battle.WaveHpRatio);
+            // ★ 윷 보상은 여기 한 곳에서만 들어간다.
+            //   벽 판정은 BaseDpsWithoutTalisman이므로 이 경로로는 도달점이 안 움직인다.
+            //   실측: 배수 1.8배까지 올려도 최고웨이브·코어가 숫자 하나 안 변했다.
+            Battle.TalismanMultiplier =
+                Talismans.DamageMultiplierAt(Battle.WaveHpRatio) * yutRunMultiplier;
 
             // 저승사자류 즉시 삭제. 꺼내면 사라지므로 두 번 적용될 수 없다.
             // Battle.Tick보다 먼저 넘겨야 같은 프레임에 클리어 판정을 받는다.

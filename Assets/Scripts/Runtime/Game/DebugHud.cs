@@ -34,6 +34,28 @@ namespace IdleDefense.Game
         [SerializeField] private int fontSize = 18;
         [SerializeField] private bool showButtons = true;
 
+        [Tooltip("켜면 부팅 직후 펼쳐진 채로 시작한다. 기본은 접힘.")]
+        [SerializeField] private bool showOnStart = false;
+
+        /// <summary>
+        /// 펼쳐져 있는가. **기본은 접힘이다.**
+        ///
+        /// ★ 2026-08-21 기본값을 뒤집었다.
+        ///   이 HUD는 화면 상단 1/3과 오른쪽 세로줄을 통째로 덮는다.
+        ///   그 상태로는 **실제 UI가 어떻게 보이는지 판단할 방법이 없다** —
+        ///   글자가 작은 건지, 카드 이름이 잘리는 건지, 여백이 빈 건지
+        ///   전부 이 회색 글자 뒤에 가려진다. 실제로 그래서 세 가지를 늦게 발견했다.
+        ///
+        ///   Suppressed와는 다른 물건이다.
+        ///     Suppressed — 다른 **화면이** 열려 있으니 잠깐 비켜라 (남이 끈다)
+        ///     expanded   — **내가** 지금 값을 보고 싶은가 (내가 켠다)
+        ///   둘을 하나로 합치면 부적 화면을 닫을 때 디버그가 멋대로 켜진다.
+        /// </summary>
+        private bool expanded;
+
+        /// <summary>접혔을 때 남는 손잡이. 이것마저 없으면 다시 켤 방법이 사라진다.</summary>
+        private const float HandleSize = 40f;
+
         private string lastEvent = "-";
         private int eventCount;
         private int runsSinceAscend = -1;
@@ -55,6 +77,8 @@ namespace IdleDefense.Game
                 enabled = false;
                 return;
             }
+
+            expanded = showOnStart;
 
             // 이벤트 이름과 개수만 받는다. 상태 값은 여기서 만들지 않는다.
             controller.OnRunStarted += (idx, wave, fromOffline) =>
@@ -84,9 +108,18 @@ namespace IdleDefense.Game
             eventCount++;
         }
 
+        /// <summary>
+        /// 게임 UI가 열려 있는 동안 디버그 HUD를 통째로 숨긴다.
+        ///
+        /// ★ IMGUI(OnGUI)는 Canvas ScreenSpaceOverlay보다 **항상 위에** 그려진다.
+        ///   그래서 uGUI 쪽에서 정렬 순서로는 이걸 못 가린다. 끄는 수밖에 없다.
+        ///   static인 이유는 화면이 여럿 생겨도 HUD는 하나이기 때문이다.
+        /// </summary>
+        public static bool Suppressed;
+
         private void OnGUI()
         {
-            if (controller == null) return;
+            if (controller == null || Suppressed) return;
 
             if (labelStyle == null)
                 labelStyle = new GUIStyle(GUI.skin.label)
@@ -95,6 +128,9 @@ namespace IdleDefense.Game
                     richText = false,
                     alignment = TextAnchor.UpperLeft,
                 };
+
+            // 손잡이는 항상 그린다. 접혀 있으면 여기서 끝난다.
+            if (DrawHandle()) return;
 
             var s = controller.State;
             var b = controller.Battle;
@@ -130,9 +166,29 @@ namespace IdleDefense.Game
                 sb.AppendLine("LOG " + recorder.FilePath);
             }
 
-            GUI.Label(new Rect(12, 12, 900, 620), sb.ToString(), labelStyle);
+            GUI.Label(new Rect(12, 12 + HandleSize + 6f, 900, 620), sb.ToString(), labelStyle);
 
             if (showButtons) { DrawButtons(); DrawLoadout(); DrawSummons(); }
+        }
+
+        /// <summary>
+        /// 접기/펴기 손잡이. 왼쪽 위 구석 40×40.
+        ///
+        /// ★ 키보드 단축키를 쓰지 않는 이유 —
+        ///   이 프로젝트는 새 Input System을 쓰므로 구형 Input.GetKeyDown이
+        ///   설정에 따라 예외를 던진다. 그리고 실기에는 키보드가 없다.
+        ///   IMGUI 버튼은 입력 시스템 설정과 무관하게 항상 동작한다.
+        /// </summary>
+        /// <returns>접혀 있으면 true — 호출부는 나머지를 그리지 않는다.</returns>
+        private bool DrawHandle()
+        {
+            var prev = GUI.color;
+            // 접혀 있을 때는 존재만 알린다. 진하면 그것부터 UI를 가린다.
+            GUI.color = expanded ? Color.white : new Color(1f, 1f, 1f, 0.30f);
+            if (GUI.Button(new Rect(6f, 6f, HandleSize, HandleSize), expanded ? "×" : "·"))
+                expanded = !expanded;
+            GUI.color = prev;
+            return !expanded;
         }
 
         private void Row(string key, string value)

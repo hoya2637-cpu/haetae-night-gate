@@ -100,7 +100,15 @@ namespace IdleDefense.Tests
             public readonly List<int> RecoveryRuns = new List<int>();
         }
 
-        private Result Simulate(Persona p, int days = 90, double dt = 0.25)
+        /// <summary>
+        /// yutK — 윷놀이 보상 계수. 0이면 미니게임이 없는 현재 게임이다.
+        ///
+        /// ★ 난수를 쓰지 않고 기대 배수를 결정적으로 곱한다.
+        ///   페르소나 4인을 비교하는 계측이라, 굴림이 들어가면 k의 효과와
+        ///   난수의 흔들림이 섞여 어느 쪽이 원인인지 못 가린다.
+        ///   난수의 체감은 YutGameTests가 따로 본다.
+        /// </summary>
+        private Result Simulate(Persona p, int days = 90, double dt = 0.25, double yutK = 0.0)
         {
             var r = new Result { Name = p.Name };
 
@@ -123,9 +131,26 @@ namespace IdleDefense.Tests
                         cfg, p.HoursAway, lastWave, coin, p.WatchAd, cfg.offlineCapHours, atk);
                     int start = Math.Max(1, (int)off.StartWave);
 
+                    // ★ 윷놀이 — 런 시작 시 한 판. 보상은 **이번 런의 부적 배수**다.
+                    //
+                    //   화폐로 주면 안 된다는 것이 2026-08-20 스윕 실측으로 확인됐다.
+                    //
+                    //   ① 일시금(시작 엽전): 웨이브 보상의 43배를 줘도(k=16) 4.9% 단축.
+                    //      강화 비용이 지수적이라 시드머니는 몇 레벨 더 사고 끝난다. 지렛대가 아니다.
+                    //   ② 코인 배율: 단축률이 **마이너스**로 나왔다. 최고웨이브 233 → 235.
+                    //      엽전 → 강화 레벨 → 진짜 DPS → **벽이 밀린다.** 도달점이 움직였다.
+                    //      런 시간은 '얼마나 강한가'가 아니라 '어디까지 가는가'가 정하기 때문이다.
+                    //
+                    //   그래서 부적과 같은 통로를 쓴다. 벽 판정은 BaseDpsWithoutTalisman이므로
+                    //   TalismanMultiplier를 올려도 **도달점이 구조적으로 불변**이다.
+                    //   같은 곳까지 더 빨리 갈 뿐이다 — 그게 우리가 원한 전부다.
+                    //
+                    //   서사도 맞는다. 도깨비가 신이 나서 힘을 보탠다.
                     var runner = new BattleRunner(cfg);
                     var tracks = new UpgradeTracks(cfg);
                     runner.BeginRun(start, off.Coin);
+                    if (yutK > 0.0)
+                        runner.TalismanMultiplier = 1.0 + yutK * YutGame.ExpectedSession();
                     runner.AttackMultiplier = atk * tracks.CombatMultiplier;
                     runner.CoinMultiplier = coin * tracks.CoinMultiplier;
 
@@ -258,6 +283,79 @@ namespace IdleDefense.Tests
             Debug.Log(sb.ToString());
             TestContext.WriteLine(sb.ToString());
             Assert.Pass();
+        }
+
+        /// <summary>
+        /// 윷놀이 보상 계수 k 스윕 — 계측이며 판정하지 않는다.
+        ///
+        /// ★ 이 표에서 고를 k의 조건은 둘이다.
+        ///   1) **90일차 티어가 6에서 안 변한다.** 하나라도 7이 되면 그 k는 탈락이다.
+        ///      미니게임이 티어 진행을 밀면 90일 곡선이 조작 실력에 종속된다.
+        ///   2) **런 시간 단축이 15% 이하다.** 부적 33.2%·광고 31%보다 작아야 한다.
+        ///      미니게임은 조합 설계의 축이 아니라 곁가지다.
+        ///
+        /// 두 조건을 만족하는 가장 큰 k를 고른다 — 제약 안에서 체감이 가장 큰 값이다.
+        /// </summary>
+        [Test]
+        public void 계측_윷_보상계수_스윕()
+        {
+            double[] ks = { 0.0, 0.02, 0.04, 0.08, 0.15, 0.19, 0.30 };
+            var sb = new StringBuilder();
+            sb.AppendLine($"윷 한 판 기대 배수 = {YutGame.ExpectedSession():F3}");
+            sb.AppendLine("보상 = 이번 런 부적 배수 x (1 + k x 기대배수).  런 시작 1판");
+            sb.AppendLine("벽 판정은 BaseDpsWithoutTalisman이므로 도달 웨이브는 구조적으로 불변이다.");
+            sb.AppendLine("참고 — 부적 1.5배에서 33.2% 단축. 윷은 그보다 한참 작아야 한다.");
+            sb.AppendLine();
+            sb.AppendLine("     k |  배수 | 페르소나 | 티어 | 최고웨이브 |    코어 | 평균분 | 단축률");
+
+            var baseline = new Dictionary<string, double>();
+            foreach (double k in ks)
+            {
+                foreach (var p in Personas)
+                {
+                    var r = Simulate(p, yutK: k);
+                    if (k == 0.0) baseline[r.Name] = r.AvgMinutes;
+                    double cut = baseline.TryGetValue(r.Name, out var b) && b > 0
+                        ? (1.0 - r.AvgMinutes / b) * 100.0 : 0.0;
+                    sb.AppendLine(
+                        $"{k,6:F2} | {1.0 + k * YutGame.ExpectedSession(),5:F2} | {r.Name,-8} | {r.Tier,4} | {r.BestWave,10} | " +
+                        $"{r.Cores,7:N0} | {r.AvgMinutes,6:F2} | {cut,5:F1}%");
+                }
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("고르는 법 — 최고웨이브가 k=0과 같고 단축률이 15% 이하인 가장 큰 k.");
+            sb.AppendLine("최고웨이브가 1이라도 움직이면 그 k는 탈락이다 — 철칙 위반이다.");
+            Report("yut_sweep.txt", sb.ToString());
+            Assert.Pass();
+        }
+
+        /// <summary>
+        /// 계측 결과를 레포의 Reports/ 에 파일로 떨어뜨린다.
+        ///
+        /// ★ Console은 각 로그의 첫 두 줄만 목록에 보여준다.
+        ///   표가 20줄이 넘는 계측을 콘솔에서 읽으려면 매번 창을 늘리고 복사해야 한다.
+        ///   파일로 두면 diff도 되고, 스윕을 다시 돌렸을 때 뭐가 달라졌는지 바로 보인다.
+        ///
+        /// Reports/ 는 산출물이므로 .gitignore 대상이다.
+        /// </summary>
+        private static void Report(string fileName, string body)
+        {
+            Debug.Log(body);
+            TestContext.WriteLine(body);
+            try
+            {
+                string dir = System.IO.Path.Combine(Application.dataPath, "..", "Reports");
+                System.IO.Directory.CreateDirectory(dir);
+                string path = System.IO.Path.Combine(dir, fileName);
+                System.IO.File.WriteAllText(path, body);
+                Debug.Log($"[Report] {System.IO.Path.GetFullPath(path)}");
+            }
+            catch (Exception e)
+            {
+                // 파일 쓰기가 실패해도 계측 자체는 성공이다. 콘솔에 이미 찍혔다.
+                Debug.LogWarning($"[Report] 파일 저장 실패: {e.Message}");
+            }
         }
 
         /// <summary>

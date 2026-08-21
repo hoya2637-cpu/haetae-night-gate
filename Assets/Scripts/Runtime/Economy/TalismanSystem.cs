@@ -605,14 +605,17 @@ namespace IdleDefense.Economy
                         if (src >= 0)
                         {
                             var e = active[src];
-                            active.Add(new ActiveEffect
-                            {
-                                Kind = e.Kind,
-                                DelayRemaining = delay,
-                                Remaining = duration,
-                                Magnitude = 1.0 + (e.Magnitude - 1.0) * Clamp01(magnitude),
-                                SourceSlot = slotIndex,
-                            });
+
+                            // ★ 선언된 Magnitude가 아니라 '지금 내고 있는 값'을 복제한다.
+                            //   이무기(만숙)는 Magnitude가 1.0이고 Grow로 자란다.
+                            //   선언값을 복제하면 다 자란 1.8이 아니라 1.0을 복제해
+                            //   복제본이 아무 일도 하지 않는다.
+                            //   체력 비율은 1.0으로 고정한다 — 복제 시점의 체력에 따라
+                            //   복제본의 세기가 달라지면 같은 조작이 매번 다른 결과를 낸다.
+                            double copied = EffectiveMagnitude(e, 1.0);
+
+                            Place(e.Kind, 1.0 + (copied - 1.0) * Clamp01(magnitude),
+                                  1, duration, delay, slotIndex);
                         }
                         ApplySelf(t, slotIndex, lane, delay, isAuto, forced: src < 0);
                     }
@@ -710,6 +713,22 @@ namespace IdleDefense.Economy
 
         public void Tick(double realDeltaTime, double battleDeltaTime)
         {
+            // ★ 자동 축(장승)은 쿨타임을 깎기 '전에' 확인한다. 순서가 설계다.
+            //
+            //   Tick 끝에서 확인하면, 이 Tick에서 막 쿨이 풀린 부적을 자동이 즉시 잡는다.
+            //   그러면 플레이어는 장승을 누를 기회조차 없고,
+            //   장승은 항상 자동 조건(중앙 배치 + 감쇠 0.75)으로만 발동한다.
+            //
+            //   앞에서 확인하면 '지난 프레임에 풀렸는데 아무도 안 누른' 것만 자동이 잡는다.
+            //   즉 자동은 선점자가 아니라 안전망이 된다 —
+            //   안 누르는 유저에게는 그대로 값이 나오고(idle 실측 +9.16%p),
+            //   누르는 유저는 뒤 배치와 감쇠 없는 세기를 가져간다.
+            //
+            //   AutoSummon(구슬 1500) 구매 여부와는 무관하다. 이게 이 부적의 존재 이유다.
+            for (int i = 0; i < equipped.Count; i++)
+                if (equipped[i].IsAuto && equipped[i].IsReady)
+                    Summon(i, Lane.Middle, isAuto: true);
+
             battleTime += battleDeltaTime;
 
             for (int i = 0; i < equipped.Count; i++)
@@ -762,13 +781,6 @@ namespace IdleDefense.Economy
                 if (e.Remaining <= 0.0) active.RemoveAt(i);
                 else active[i] = e;
             }
-
-            // 자동 축(장승)은 AutoSummon 구매 여부와 무관하게 스스로 발동한다.
-            // 이게 이 부적의 존재 이유다 — 안 누르는 유저에게만 값이 나온다.
-            // AutoSummon을 산 유저에게는 어차피 전부 자동이라 차이가 없다(실측 +0.61%p).
-            for (int i = 0; i < equipped.Count; i++)
-                if (equipped[i].IsAuto && equipped[i].IsReady)
-                    Summon(i, Lane.Middle, isAuto: true);
 
             if (AutoSummon) TryAutoSummon();
         }
